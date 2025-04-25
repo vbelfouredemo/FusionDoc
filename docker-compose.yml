@@ -1,0 +1,28 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    command: serve
+
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/chromium:/chroma/chroma
+
+  langchain:
+    build: ./langchain
+    container_name: langchain
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/langchain:/data
+    depends_on:
+      - chromadb
+      - ollama

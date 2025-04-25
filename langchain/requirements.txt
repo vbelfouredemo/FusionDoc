@@ -1,0 +1,12 @@
+langchain>=0.0.267
+fastapi>=0.104.0
+uvicorn>=0.23.2
+python-multipart>=0.0.6
+langchain-community>=0.0.1
+chromadb>=0.4.15
+pydantic>=2.4.2
+jq>=1.4.1
+markdown>=3.4.1
+pdfkit>=1.0.0
+weasyprint>=59.0
+langchain-ollama>=0.0.1

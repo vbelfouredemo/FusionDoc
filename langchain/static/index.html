@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FusionDoc - Integration Documentation Tool</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f7fa;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 1rem 0;
+            margin-bottom: 2rem;
+            border-radius: 5px;
+        }
+        header h1 {
+            text-align: center;
+            margin: 0;
+            padding: 0.5rem;
+        }
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #e1e4e8;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            font-weight: 500;
+        }
+        .tab.active {
+            border-bottom: 2px solid #3498db;
+            color: #3498db;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .drag-area {
+            border: 2px dashed #3498db;
+            height: 200px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            margin-bottom: 1rem;
+            transition: 0.3s;
+        }
+        .drag-area.active {
+            border-color: #27ae60;
+            background-color: rgba(39, 174, 96, 0.1);
+        }
+        .drag-area h3 {
+            font-size: 20px;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        .drag-area span {
+            font-size: 14px;
+            font-weight: 400;
+            color: #7f8c8d;
+            margin: 10px 0 15px 0;
+        }
+        .drag-area button {
+            padding: 10px 25px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            outline: none;
+            background-color: #3498db;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .drag-area button:hover {
+            background-color: #2980b9;
+        }
+        .file-container {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #ecf0f1;
+        }
+        .file-info {
+            flex: 1;
+            margin-left: 15px;
+        }
+        .file-name {
+            font-weight: 500;
+        }
+        .file-size {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        .format-selection {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
+        .format-selection h4 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .format-options {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+        }
+        .format-option {
+            display: flex;
+            align-items: center;
+        }
+        .format-option input {
+            margin-right: 5px;
+        }
+        .analyze-btn {
+            display: none;
+            padding: 10px 25px;
+            font-size: 16px;
+            font-weight: 500;
+            border: none;
+            outline: none;
+            background-color: #27ae60;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 1rem;
+            transition: all 0.3s ease;
+        }
+        .analyze-btn:hover {
+            background-color: #219653;
+        }
+        .analyze-btn.visible {
+            display: block;
+        }
+        .analyze-smart-btn {
+            background-color: #8e44ad;
+        }
+        .analyze-smart-btn:hover {
+            background-color: #7d3c98;
+        }
+        #result {
+            margin-top: 2rem;
+            padding: 0 1rem;
+        }
+        .documentation {
+            background-color: #f1f8e9;
+            border-left: 5px solid #7cb342;
+            padding: 1rem;
+            border-radius: 0 5px 5px 0;
+            white-space: pre-wrap;
+        }
+        .loading {
+            text-align: center;
+            margin: 2rem 0;
+            display: none;
+        }
+        .spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            color: #e74c3c;
+            background-color: #ffeaea;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-top: 1rem;
+            display: none;
+        }
+        .download-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .download-btn:hover {
+            background-color: #2980b9;
+        }
+        .training-form {
+            margin-top: 20px;
+        }
+        .training-example {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+        textarea.json-input {
+            font-family: monospace;
+            min-height: 200px;
+        }
+        .add-example-btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .remove-example-btn {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+            float: right;
+        }
+        .submit-training-btn {
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        .training-status {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #e8f5e9;
+            border-radius: 5px;
+        }
+        .training-status h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .training-files {
+            margin-top: 10px;
+        }
+        .training-file {
+            padding: 8px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .training-file:last-child {
+            border-bottom: none;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            background-color: #3498db;
+            margin-left: 10px;
+        }
+        .or-divider {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+        .or-divider:before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background-color: #e0e0e0;
+            z-index: 1;
+        }
+        .or-divider span {
+            display: inline-block;
+            padding: 0 15px;
+            background-color: white;
+            position: relative;
+            z-index: 2;
+            color: #7f8c8d;
+        }
+        .json-helper {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>FusionDoc</h1>
+    </header>
+    <div class="container">
+        <div class="tabs">
+            <div class="tab active" data-tab="generate">Generate Documentation</div>
+            <div class="tab" data-tab="train">Train the Model</div>
+        </div>
+        
+        <!-- Generate Documentation Tab -->
+        <div class="tab-content active" id="generate-tab">
+            <div class="card">
+                <h2>Upload Integration JSON File</h2>
+                <p>Upload a JSON file exported from your integration tool to generate human-readable documentation.</p>
+                
+                <div class="drag-area">
+                    <h3>Drag & Drop</h3>
+                    <span>Or</span>
+                    <button>Browse File</button>
+                    <input type="file" hidden accept=".json">
+                </div>
+                
+                <div id="file-display"></div>
+                
+                <div class="format-selection">
+                    <h4>Select Output Format</h4>
+                    <div class="format-options">
+                        <label class="format-option">
+                            <input type="radio" name="output-format" value="html" checked>
+                            HTML
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="output-format" value="markdown">
+                            Markdown
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="output-format" value="pdf">
+                            PDF
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="display: flex; gap: 10px;">
+                    <button id="analyze" class="analyze-btn">Generate Documentation</button>
+                    <button id="analyze-smart" class="analyze-btn analyze-smart-btn">Generate Smart Documentation</button>
+                </div>
+                
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Processing your integration file...</p>
+                </div>
+                
+                <div class="error" id="error-message"></div>
+            </div>
+            
+            <div id="result"></div>
+        </div>
+        
+        <!-- Train the Model Tab -->
+        <div class="tab-content" id="train-tab">
+            <div class="card">
+                <h2>Train the Model</h2>
+                <p>Add examples to train the model to understand your integration formats better.</p>
+                
+                <div class="training-form">
+                    <div id="training-examples">
+                        <div class="training-example" data-id="1">
+                            <button class="remove-example-btn" data-id="1">Remove</button>
+                            <h4>Example 1</h4>
+                            
+                            <div>
+                                <label>Integration JSON:</label>
+                                <div class="drag-area json-drag-area">
+                                    <h3>Drag & Drop JSON File</h3>
+                                    <span>Or</span>
+                                    <button>Browse File</button>
+                                    <input type="file" hidden accept=".json" class="json-file-input">
+                                </div>
+                                <div class="json-helper">You can also paste your JSON directly:</div>
+                                <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
+                            </div>
+                            
+                            <label>Expected Documentation:</label>
+                            <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                        </div>
+                    </div>
+                    
+                    <button class="add-example-btn">Add Another Example</button>
+                    <br>
+                    <button class="submit-training-btn">Submit Training Data</button>
+                </div>
+                
+                <div class="loading" id="training-loading">
+                    <div class="spinner"></div>
+                    <p>Processing training data...</p>
+                </div>
+                
+                <div class="error" id="training-error"></div>
+                
+                <div class="training-status" id="training-status" style="display: none;">
+                    <h3>Training Data Status</h3>
+                    <div id="training-stats">
+                        <!-- Training status will be displayed here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Tab switching functionality
+            const tabs = document.querySelectorAll('.tab');
+            const tabContents = document.querySelectorAll('.tab-content');
+            
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const tabId = tab.getAttribute('data-tab');
+                    
+                    // Remove active class from all tabs and tab contents
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+                    
+                    // Add active class to clicked tab and corresponding content
+                    tab.classList.add('active');
+                    document.getElementById(`${tabId}-tab`).classList.add('active');
+                    
+                    // If training tab is clicked, load training status
+                    if (tabId === 'train') {
+                        loadTrainingStatus();
+                    }
+                });
+            });
+            
+            // Document generation functionality
+            const dragArea = document.querySelector('.drag-area');
+            const button = dragArea.querySelector('button');
+            const input = dragArea.querySelector('input');
+            const fileDisplay = document.getElementById('file-display');
+            const analyzeBtn = document.getElementById('analyze');
+            const analyzeSmartBtn = document.getElementById('analyze-smart');
+            const result = document.getElementById('result');
+            const loading = document.querySelector('.loading');
+            const errorMessage = document.getElementById('error-message');
+            const formatOptions = document.getElementsByName('output-format');
+            
+            let file;
+            let uploadedFilename;
+
+            button.onclick = () => {
+                input.click();
+            };
+
+            input.addEventListener('change', function() {
+                file = this.files[0];
+                displayFile();
+            });
+
+            dragArea.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                dragArea.classList.add('active');
+            });
+
+            dragArea.addEventListener('dragleave', () => {
+                dragArea.classList.remove('active');
+            });
+
+            dragArea.addEventListener('drop', (event) => {
+                event.preventDefault();
+                dragArea.classList.remove('active');
+                file = event.dataTransfer.files[0];
+                displayFile();
+            });
+
+            function displayFile() {
+                if (file && file.type === "application/json") {
+                    errorMessage.style.display = 'none';
+                    const reader = new FileReader();
+                    
+                    reader.onload = () => {
+                        const fileSize = (file.size / 1024).toFixed(2) + " KB";
+                        fileDisplay.innerHTML = `
+                            <div class="file-container">
+                                <div class="file-info">
+                                    <div class="file-name">${file.name}</div>
+                                    <div class="file-size">${fileSize}</div>
+                                </div>
+                            </div>
+                        `;
+                        analyzeBtn.classList.add('visible');
+                        analyzeSmartBtn.classList.add('visible');
+                    };
+                    
+                    reader.readAsDataURL(file);
+                } else {
+                    showError('Please select a valid JSON file');
+                    resetFile();
+                }
+            }
+
+            function resetFile() {
+                file = null;
+                fileDisplay.innerHTML = '';
+                analyzeBtn.classList.remove('visible');
+                analyzeSmartBtn.classList.remove('visible');
+                result.innerHTML = '';
+            }
+
+            function showError(message) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = 'block';
+                loading.style.display = 'none';
+            }
+            
+            function getSelectedFormat() {
+                for (const option of formatOptions) {
+                    if (option.checked) {
+                        return option.value;
+                    }
+                }
+                return 'html'; // Default to HTML
+            }
+
+            async function analyzeFile(useSmartGeneration = false) {
+                if (!file) return;
+                
+                result.innerHTML = '';
+                loading.style.display = 'block';
+                errorMessage.style.display = 'none';
+                
+                // Upload the file first
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const uploadResponse = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const uploadData = await uploadResponse.json();
+                    
+                    if (uploadResponse.ok) {
+                        uploadedFilename = uploadData.filename;
+                        
+                        // Now analyze the file with selected format
+                        const selectedFormat = getSelectedFormat();
+                        const analyzeFormData = new FormData();
+                        analyzeFormData.append('filename', uploadedFilename);
+                        analyzeFormData.append('output_format', selectedFormat);
+                        
+                        // Choose the endpoint based on whether smart generation is requested
+                        const endpoint = useSmartGeneration ? '/analyze-smart' : '/analyze-with-format';
+                        
+                        const analyzeResponse = await fetch(endpoint, {
+                            method: 'POST',
+                            body: analyzeFormData
+                        });
+                        
+                        const analyzeData = await analyzeResponse.json();
+                        
+                        if (analyzeResponse.ok && analyzeData.documentation) {
+                            let resultHTML = `
+                                <div class="card">
+                                    <h2>Integration Documentation${useSmartGeneration ? ' (Smart)' : ''}</h2>
+                                    <div class="documentation">${analyzeData.documentation}</div>
+                            `;
+                            
+                            // Add download button for markdown or PDF format
+                            if (analyzeData.format === 'markdown' || analyzeData.format === 'pdf') {
+                                resultHTML += `
+                                    <a href="${analyzeData.download_url}" class="download-btn">
+                                        Download ${analyzeData.format === 'markdown' ? 'Markdown' : 'PDF'}
+                                    </a>
+                                `;
+                            }
+                            
+                            resultHTML += `</div>`;
+                            result.innerHTML = resultHTML;
+                        } else {
+                            showError(analyzeData.error || 'Failed to generate documentation');
+                        }
+                    } else {
+                        showError(uploadData.error || 'Failed to upload file');
+                    }
+                } catch (error) {
+                    showError('An error occurred: ' + error.message);
+                } finally {
+                    loading.style.display = 'none';
+                }
+            }
+
+            analyzeBtn.addEventListener('click', () => analyzeFile(false));
+            analyzeSmartBtn.addEventListener('click', () => analyzeFile(true));
+            
+            // Training functionality
+            const trainingExamples = document.getElementById('training-examples');
+            const addExampleBtn = document.querySelector('.add-example-btn');
+            const submitTrainingBtn = document.querySelector('.submit-training-btn');
+            const trainingLoading = document.getElementById('training-loading');
+            const trainingError = document.getElementById('training-error');
+            const trainingStatus = document.getElementById('training-status');
+            
+            // Setup JSON file upload for training examples
+            function setupJsonFileUpload(example) {
+                const dragArea = example.querySelector('.json-drag-area');
+                const button = dragArea.querySelector('button');
+                const input = dragArea.querySelector('.json-file-input');
+                const jsonInput = example.querySelector('.json-input');
+                
+                button.onclick = () => {
+                    input.click();
+                };
+                
+                input.addEventListener('change', function() {
+                    if (this.files[0]) {
+                        processJsonFile(this.files[0], jsonInput, dragArea);
+                    }
+                });
+                
+                dragArea.addEventListener('dragover', (event) => {
+                    event.preventDefault();
+                    dragArea.classList.add('active');
+                });
+                
+                dragArea.addEventListener('dragleave', () => {
+                    dragArea.classList.remove('active');
+                });
+                
+                dragArea.addEventListener('drop', (event) => {
+                    event.preventDefault();
+                    dragArea.classList.remove('active');
+                    if (event.dataTransfer.files[0]) {
+                        processJsonFile(event.dataTransfer.files[0], jsonInput, dragArea);
+                    }
+                });
+            }
+            
+            function processJsonFile(file, jsonInputElement, dragAreaElement) {
+                if (file.type === "application/json") {
+                    const reader = new FileReader();
+                    
+                    reader.onload = () => {
+                        try {
+                            // Format JSON for better readability
+                            const jsonData = JSON.parse(reader.result);
+                            const prettyJson = JSON.stringify(jsonData, null, 2);
+                            jsonInputElement.value = prettyJson;
+                            
+                            // Update drag area to show file is loaded
+                            dragAreaElement.innerHTML = `
+                                <h3>File Loaded</h3>
+                                <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
+                                <button>Change File</button>
+                                <input type="file" hidden accept=".json" class="json-file-input">
+                            `;
+                            
+                            // Reattach event listeners to the new button and input
+                            const newButton = dragAreaElement.querySelector('button');
+                            const newInput = dragAreaElement.querySelector('.json-file-input');
+                            
+                            newButton.onclick = () => {
+                                newInput.click();
+                            };
+                            
+                            newInput.addEventListener('change', function() {
+                                if (this.files[0]) {
+                                    processJsonFile(this.files[0], jsonInputElement, dragAreaElement);
+                                }
+                            });
+                            
+                        } catch (e) {
+                            showTrainingError(`Invalid JSON file: ${e.message}`);
+                        }
+                    };
+                    
+                    reader.readAsText(file);
+                } else {
+                    showTrainingError('Please select a valid JSON file');
+                }
+            }
+            
+            // Initialize the first example's file upload
+            setupJsonFileUpload(document.querySelector('.training-example'));
+            
+            // Add example event
+            addExampleBtn.addEventListener('click', () => {
+                const exampleCount = trainingExamples.children.length + 1;
+                const newExample = document.createElement('div');
+                newExample.className = 'training-example';
+                newExample.setAttribute('data-id', exampleCount);
+                
+                newExample.innerHTML = `
+                    <button class="remove-example-btn" data-id="${exampleCount}">Remove</button>
+                    <h4>Example ${exampleCount}</h4>
+                    
+                    <div>
+                        <label>Integration JSON:</label>
+                        <div class="drag-area json-drag-area">
+                            <h3>Drag & Drop JSON File</h3>
+                            <span>Or</span>
+                            <button>Browse File</button>
+                            <input type="file" hidden accept=".json" class="json-file-input">
+                        </div>
+                        <div class="json-helper">You can also paste your JSON directly:</div>
+                        <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
+                    </div>
+                    
+                    <label>Expected Documentation:</label>
+                    <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                `;
+                
+                trainingExamples.appendChild(newExample);
+                
+                // Setup file upload for the new example
+                setupJsonFileUpload(newExample);
+                
+                // Add remove event to the new button
+                newExample.querySelector('.remove-example-btn').addEventListener('click', function() {
+                    removeExample(this);
+                });
+            });
+            
+            // Remove example function
+            function removeExample(button) {
+                const exampleId = button.getAttribute('data-id');
+                const example = document.querySelector(`.training-example[data-id="${exampleId}"]`);
+                
+                if (trainingExamples.children.length > 1) {
+                    example.remove();
+                    
+                    // Renumber remaining examples
+                    const examples = trainingExamples.querySelectorAll('.training-example');
+                    examples.forEach((ex, index) => {
+                        ex.setAttribute('data-id', index + 1);
+                        ex.querySelector('h4').textContent = `Example ${index + 1}`;
+                        ex.querySelector('.remove-example-btn').setAttribute('data-id', index + 1);
+                    });
+                } else {
+                    // Don't remove the last example, just clear it
+                    example.querySelector('.json-input').value = '';
+                    example.querySelector('.documentation-input').value = '';
+                    
+                    // Reset the drag area
+                    const dragArea = example.querySelector('.json-drag-area');
+                    dragArea.innerHTML = `
+                        <h3>Drag & Drop JSON File</h3>
+                        <span>Or</span>
+                        <button>Browse File</button>
+                        <input type="file" hidden accept=".json" class="json-file-input">
+                    `;
+                    
+                    // Reattach file upload functionality
+                    setupJsonFileUpload(example);
+                }
+            }
+            
+            // Add remove event to initial example
+            document.querySelector('.remove-example-btn').addEventListener('click', function() {
+                removeExample(this);
+            });
+            
+            // Submit training data
+            submitTrainingBtn.addEventListener('click', async () => {
+                const examples = trainingExamples.querySelectorAll('.training-example');
+                const trainingData = {
+                    examples: []
+                };
+                
+                // Validate and collect examples
+                for (const example of examples) {
+                    const jsonInput = example.querySelector('.json-input').value;
+                    const docInput = example.querySelector('.documentation-input').value;
+                    
+                    if (!jsonInput || !docInput) {
+                        showTrainingError('All examples must have both JSON and documentation filled out.');
+                        return;
+                    }
+                    
+                    try {
+                        const jsonData = JSON.parse(jsonInput);
+                        trainingData.examples.push({
+                            integration_json: jsonData,
+                            documentation: docInput
+                        });
+                    } catch (e) {
+                        showTrainingError(`Invalid JSON in example ${example.querySelector('h4').textContent}: ${e.message}`);
+                        return;
+                    }
+                }
+                
+                if (trainingData.examples.length === 0) {
+                    showTrainingError('Please add at least one training example.');
+                    return;
+                }
+                
+                // Submit training data
+                trainingLoading.style.display = 'block';
+                trainingError.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/train', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(trainingData)
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Clear form and show success
+                        examples.forEach((example, index) => {
+                            if (index > 0) {
+                                example.remove();
+                            } else {
+                                example.querySelector('.json-input').value = '';
+                                example.querySelector('.documentation-input').value = '';
+                                
+                                // Reset the drag area
+                                const dragArea = example.querySelector('.json-drag-area');
+                                dragArea.innerHTML = `
+                                    <h3>Drag & Drop JSON File</h3>
+                                    <span>Or</span>
+                                    <button>Browse File</button>
+                                    <input type="file" hidden accept=".json" class="json-file-input">
+                                `;
+                                
+                                // Reattach file upload functionality
+                                setupJsonFileUpload(example);
+                            }
+                        });
+                        
+                        // Refresh training status
+                        loadTrainingStatus();
+                    } else {
+                        showTrainingError(data.error || 'Failed to submit training data');
+                    }
+                } catch (error) {
+                    showTrainingError('An error occurred: ' + error.message);
+                } finally {
+                    trainingLoading.style.display = 'none';
+                }
+            });
+            
+            function showTrainingError(message) {
+                trainingError.textContent = message;
+                trainingError.style.display = 'block';
+                trainingLoading.style.display = 'none';
+            }
+            
+            // Load training status
+            async function loadTrainingStatus() {
+                try {
+                    const response = await fetch('/training/status');
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        let statsHTML = '';
+                        
+                        if (data.total_examples > 0) {
+                            statsHTML += `<p>You have ${data.total_examples} training examples in ${data.total_files} files.</p>`;
+                            
+                            if (data.vectorstore_exists) {
+                                statsHTML += `<p><span class="badge" style="background-color:#27ae60">READY</span> Vector store is initialized and ready for smart document generation.</p>`;
+                            } else {
+                                statsHTML += `<p><span class="badge" style="background-color:#e74c3c">NOT READY</span> Vector store is not yet initialized.</p>`;
+                            }
+                            
+                            statsHTML += `<h4>Training Files:</h4>`;
+                            statsHTML += `<div class="training-files">`;
+                            
+                            data.files.forEach(file => {
+                                statsHTML += `
+                                    <div class="training-file">
+                                        ${file.examples} examples, created on ${file.created}
+                                    </div>
+                                `;
+                            });
+                            
+                            statsHTML += `</div>`;
+                        } else {
+                            statsHTML = `<p>No training data available. Add some examples to improve document generation.</p>`;
+                        }
+                        
+                        document.getElementById('training-stats').innerHTML = statsHTML;
+                        trainingStatus.style.display = 'block';
+                    } else {
+                        trainingStatus.style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Error loading training status:', error);
+                }
+            }
+            
+            // Initial call to load training status
+            loadTrainingStatus();
+        });
+    </script>
+</body>
+</html>
