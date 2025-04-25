@@ -24,6 +24,36 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("FusionDoc")
 
+def ensure_mistral_model():
+    """Check if Mistral model is installed, and install it if not."""
+    logger.info("Checking if Mistral model is available...")
+    try:
+        response = requests.post(
+            "http://ollama:11434/api/generate",
+            json={"model": "mistral", "prompt": "test", "stream": False},
+            timeout=5
+        )
+        if response.status_code == 200:
+            logger.info("Mistral model is already installed")
+            return True
+        
+        if response.status_code == 404:
+            logger.info("Mistral model not found. Installing now...")
+            pull_response = requests.post(
+                "http://ollama:11434/api/pull",
+                json={"name": "mistral"},
+                timeout=600  # Longer timeout for model download
+            )
+            if pull_response.status_code == 200:
+                logger.info("Successfully installed Mistral model")
+                return True
+            else:
+                logger.error(f"Failed to install Mistral model: {pull_response.status_code}, {pull_response.text}")
+                return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error checking/installing Mistral model: {str(e)}")
+        return False
+
 class OutputFormat(str, Enum):
     html = "html"
     markdown = "markdown"
@@ -50,6 +80,32 @@ app.add_middleware(
 
 # Ensure data directory exists
 os.makedirs("/data", exist_ok=True)
+
+# Try to ensure Mistral model is installed at startup
+@app.on_event("startup")
+async def startup_event():
+    # Retry a few times to accommodate Ollama startup time
+    max_retries = 5
+    for attempt in range(max_retries):
+        logger.info(f"Startup check {attempt+1}/{max_retries}: Verifying Ollama and Mistral availability")
+        try:
+            # Check if Ollama is up
+            response = requests.get("http://ollama:11434", timeout=5)
+            if response.status_code < 400:
+                # Ollama is up, now ensure Mistral is installed
+                if ensure_mistral_model():
+                    logger.info("Startup completed: Ollama is running and Mistral model is available")
+                    break
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ollama service not ready yet: {str(e)}")
+        
+        # If we reach here, either Ollama isn't up or Mistral installation failed
+        if attempt < max_retries - 1:
+            delay = 10  # Wait 10 seconds between attempts
+            logger.info(f"Retrying in {delay} seconds...")
+            time.sleep(delay)
+        else:
+            logger.error("Failed to ensure Mistral model availability after maximum retries")
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -79,6 +135,160 @@ async def upload_file(file: UploadFile = File(...)):
 async def analyze_file(filename: str = Form(...)):
     try:
         logger.info(f"Starting analysis of file: {filename}")
+        # Load the JSON file
+        file_path = f"/data/{filename}"
+        logger.info(f"Loading file from path: {file_path}")
+        
+        # Check if Ollama service is available
+        try:
+            logger.info("Checking if Ollama service is available...")
+            # Ollama doesn't have a /api/health endpoint, use the root endpoint instead
+            response = requests.get("http://ollama:11434", timeout=5)
+            logger.info(f"Ollama connection check response: {response.status_code}")
+            if response.status_code >= 400:
+                logger.error(f"Ollama service returned status code: {response.status_code}")
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Ollama service is not responding correctly. Please check if the service is running properly."}
+                )
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Cannot connect to Ollama service: {str(e)}")
+            return JSONResponse(
+                status_code=503,
+                content={"error": f"Cannot connect to Ollama service: {str(e)}. Please ensure the Ollama container is running and that the Mistral model is installed."}
+            )
+        
+        # Check if Mistral model is available
+        try:
+            logger.info("Checking if Mistral model is available...")
+            response = requests.post(
+                "http://ollama:11434/api/generate",
+                json={"model": "mistral", "prompt": "test", "stream": False},
+                timeout=5
+            )
+            logger.info(f"Mistral model check response: {response.status_code}")
+            if response.status_code == 404:
+                logger.error("Mistral model not found")
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "The Mistral model is not installed in Ollama. Please install it with 'docker exec -it ollama ollama pull mistral'"}
+                )
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Could not check Mistral model: {str(e)}")
+            # If we can't check model, we'll try to use it anyway
+        
+        # Initialize document loader for JSON
+        try:
+            logger.info("Loading and flattening JSON document...")
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.json') as tmp:
+                with open(file_path, 'r') as f:
+                    json_data = json.load(f)
+                
+                # Convert the JSON to a more flat structure if needed
+                flat_json = flatten_json(json_data)
+                json.dump(flat_json, tmp)
+                tmp.flush()
+                
+                # Load the flattened JSON
+                loader = JSONLoader(
+                    file_path=tmp.name,
+                    jq_schema='.',
+                    text_content=False
+                )
+                documents = loader.load()
+                logger.info(f"Successfully loaded {len(documents)} documents")
+        except Exception as e:
+            logger.error(f"Error loading JSON: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Error loading JSON: {str(e)}"}
+            )
+        
+        # Setup embeddings with retry logic
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Embedding attempt {attempt + 1}: Initializing OllamaEmbeddings...")
+                embeddings = OllamaEmbeddings(
+                    base_url="http://ollama:11434",
+                    model="mistral"
+                )
+                
+                # Test embeddings with a simple input
+                logger.info("Testing embeddings with a simple query...")
+                embeddings.embed_query("test")
+                logger.info("Embedding test successful")
+                break
+            except Exception as e:
+                logger.error(f"Embedding attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": f"Failed to initialize embeddings after {max_retries} attempts: {str(e)}. Please ensure the Ollama service is running and the Mistral model is installed."}
+                    )
+                logger.warning(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+        
+        # Create vector store
+        try:
+            logger.info("Creating vector store with ChromaDB...")
+            vectorstore = Chroma.from_documents(
+                documents=documents,
+                embedding=embeddings,
+                persist_directory="/data/chromium"
+            )
+            logger.info("Vector store created successfully")
+        except Exception as e:
+            logger.error(f"Error creating vector store: {str(e)}")
+            return JSONResponse(
+                status_code=503,
+                content={"error": f"Error creating vector store: {str(e)}. Please check ChromaDB connection."}
+            )
+        
+        # Setup retrieval chain with retry logic
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
+                llm = OllamaLLM(
+                    base_url="http://ollama:11434", 
+                    model="mistral"
+                )
+                qa_chain = RetrievalQA.from_chain_type(
+                    llm=llm,
+                    chain_type="stuff",
+                    retriever=vectorstore.as_retriever()
+                )
+                
+                # Generate documentation
+                logger.info("Generating documentation...")
+                query = "Document this integration. Explain what it does in simple terms, including the source systems, transformations, and target systems."
+                result = qa_chain.invoke(query)["result"]
+                logger.info("Documentation generated successfully")
+                
+                return {"documentation": result}
+            except Exception as e:
+                logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": f"Failed to generate documentation after {max_retries} attempts: {str(e)}"}
+                    )
+                logger.warning(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+        
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error analyzing file: {str(e)}"}
+        )
+
+@app.post("/analyze-with-format")
+async def analyze_file_with_format(filename: str = Form(...), output_format: OutputFormat = Form(OutputFormat.html)):
+    try:
+        logger.info(f"Starting analysis of file: {filename} with output format: {output_format}")
         # Load the JSON file
         file_path = f"/data/{filename}"
         logger.info(f"Loading file from path: {file_path}")
