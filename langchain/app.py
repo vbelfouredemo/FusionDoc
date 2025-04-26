@@ -1715,154 +1715,183 @@ async def get_training_status():
             content={"error": f"Error getting training status: {str(e)}"}
         )
 
-@app.get("/download/{filename}")
-async def download_file(filename: str):
-    """Serve a file for download"""
-    file_path = f"/data/{filename}"
-    
-    if not os.path.exists(file_path):
+@app.get("/training/list")
+async def list_training_examples():
+    """List all individual training examples that can be managed"""
+    try:
+        examples = []
+        
+        # Check the langchain directory for individual training examples
+        if os.path.exists("/data/langchain"):
+            for example_file in os.listdir("/data/langchain"):
+                if example_file.endswith(".json"):
+                    file_path = f"/data/langchain/{example_file}"
+                    try:
+                        # Get file stats for creation time
+                        file_stats = os.stat(file_path)
+                        created_time = time.strftime("%Y-%m-%d %H:%M:%S", 
+                                                   time.localtime(file_stats.st_ctime))
+                        
+                        # Extract integration name from filename pattern: Name_UUID.json
+                        parts = example_file.split('_')
+                        integration_name = '_'.join(parts[:-1]) if len(parts) > 1 else example_file
+                        integration_id = parts[-1].replace(".json", "") if len(parts) > 1 else ""
+                        
+                        # Get a snippet of the documentation for preview
+                        doc_preview = ""
+                        with open(file_path, "r") as f:
+                            data = json.load(f)
+                            if "documentation" in data:
+                                # Get first 100 chars of documentation as preview
+                                doc_preview = data["documentation"][:100] + "..." if len(data["documentation"]) > 100 else data["documentation"]
+                        
+                        examples.append({
+                            "id": integration_id,
+                            "filename": example_file,
+                            "integration_name": integration_name,
+                            "created": created_time,
+                            "preview": doc_preview,
+                            "file_path": file_path
+                        })
+                    except Exception as e:
+                        logger.error(f"Error reading example file {example_file}: {str(e)}")
+        
+        # Sort by creation time, newest first
+        examples.sort(key=lambda x: x["created"], reverse=True)
+        
+        return {"examples": examples}
+    except Exception as e:
+        logger.error(f"Error listing training examples: {str(e)}")
         return JSONResponse(
-            status_code=404,
-            content={"error": f"File {filename} not found"}
+            status_code=500,
+            content={"error": f"Error listing training examples: {str(e)}"}
         )
-    
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type='application/octet-stream'
-    )
 
-def flatten_json(json_data, prefix=""):
-    """Flatten a nested JSON structure into a flat dictionary."""
-    result = {}
-    for key, value in json_data.items():
-        new_key = f"{prefix}{key}"
-        if isinstance(value, dict):
-            result.update(flatten_json(value, f"{new_key}."))
-        elif isinstance(value, list):
-            for i, item in enumerate(value):
-                if isinstance(item, dict):
-                    result.update(flatten_json(item, f"{new_key}[{i}]."))
-                else:
-                    result[f"{new_key}[{i}]"] = str(item)
-        else:
-            result[new_key] = str(value)
-    return result
+@app.delete("/training/delete/{example_id}")
+async def delete_training_example(example_id: str):
+    """Delete a specific training example by ID"""
+    try:
+        # Find the example file with this ID
+        example_found = False
+        example_file = None
+        markdown_file = None
+        
+        if os.path.exists("/data/langchain"):
+            for file in os.listdir("/data/langchain"):
+                if file.endswith(f"{example_id}.json"):
+                    example_file = f"/data/langchain/{file}"
+                    example_found = True
+                    # Also look for accompanying markdown file
+                    md_file = file.replace(".json", ".md")
+                    if os.path.exists(f"/data/langchain/{md_file}"):
+                        markdown_file = f"/data/langchain/{md_file}"
+                    break
+        
+        if not example_found:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Training example with ID {example_id} not found"}
+            )
+        
+        # Delete the example file
+        os.remove(example_file)
+        logger.info(f"Deleted training example file: {example_file}")
+        
+        # Delete accompanying markdown file if it exists
+        if markdown_file and os.path.exists(markdown_file):
+            os.remove(markdown_file)
+            logger.info(f"Deleted training example markdown: {markdown_file}")
+        
+        # This will require retraining the vector store
+        # Mark the vector store as needing rebuild
+        with open("/data/training/rebuild_required", "w") as f:
+            f.write("Training examples have been deleted. Vectorstore needs rebuild.")
+        
+        return {"message": f"Successfully deleted training example with ID {example_id}"}
+    except Exception as e:
+        logger.error(f"Error deleting training example: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error deleting training example: {str(e)}"}
+        )
 
-def analyze_integration_flow(integration_id, extract_dir):
-    """
-    Analyze the complete integration flow for a given integration ID.
-    Examines component configurations and their relationships to build a comprehensive view.
-    
-    Args:
-        integration_id: The UUID of the integration
-        extract_dir: The directory where the archive was extracted
-    
-    Returns:
-        A dictionary with comprehensive information about the integration flow
-    """
-    logger.info(f"Analyzing integration flow for: {integration_id}")
-    
-    # Find all component configuration files for this integration
-    component_configs_glob = f"{extract_dir}/**/component_configs/*.json"
-    component_files = glob.glob(component_configs_glob, recursive=True)
-    
-    # Extract service-related components
-    components = []
-    for file_path in component_files:
-        try:
-            with open(file_path, 'r') as f:
-                component_data = json.load(f)
-                
-                # Check if this component belongs to our integration
-                if component_data.get("service_id") == integration_id:
-                    # Extract the filename to get component name if available
-                    filename = os.path.basename(file_path)
-                    # If filename starts with a UUID, it might be a branch component
-                    if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", filename):
-                        # Extract name from filename if it follows the pattern Name_UUID.json
-                        name_match = re.match(r"(.*?)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", filename)
-                        if name_match:
-                            # If there's a name in the filename, use it if component doesn't have a name
-                            if not component_data.get("name"):
-                                component_data["name"] = name_match.group(1)
-                    
-                    components.append({
-                        "file_path": file_path,
-                        "id": component_data.get("component_config_id"),
-                        "name": component_data.get("name", "Unnamed Component"),
-                        "order": component_data.get("component_config_order"),
-                        "parent_id": component_data.get("parent_component_config_id"),
-                        "description": component_data.get("description"),
-                        "data": component_data
-                    })
-        except Exception as e:
-            logger.error(f"Error processing component file {file_path}: {str(e)}")
-    
-    # Sort components by order
-    components.sort(key=lambda x: float(x["order"]) if x["order"] is not None else float('inf'))
-    
-    # Build a tree structure representing the flow
-    root_components = []
-    child_map = {}
-    
-    # Group children by parent ID
-    for component in components:
-        parent_id = component["parent_id"]
-        if parent_id is None:
-            root_components.append(component)
-        else:
-            if parent_id not in child_map:
-                child_map[parent_id] = []
-            child_map[parent_id].append(component)
-    
-    # Recursively build the tree
-    def build_tree(component):
-        component_id = component["id"]
-        children = child_map.get(component_id, [])
-        # Sort children by order
-        children.sort(key=lambda x: float(x["order"]) if x["order"] is not None else float('inf'))
-        return {
-            "id": component_id,
-            "name": component["name"],
-            "order": component["order"],
-            "description": component["description"],
-            "children": [build_tree(child) for child in children],
-            "data": component["data"]
-        }
-    
-    # Build flow tree
-    flow = [build_tree(component) for component in root_components]
-    
-    # Extract input/output mappings for each component
-    for component in components:
-        component_data = component["data"]
+@app.post("/training/rebuild-vectorstore")
+async def rebuild_vectorstore():
+    """Rebuild the training vectorstore from existing examples"""
+    try:
+        if not os.path.exists("/data/langchain"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No training examples found to rebuild vectorstore"}
+            )
         
-        # Parse JSON strings in input_config_json and output_config_json if they exist
-        if component_data.get("input_config_json") and isinstance(component_data["input_config_json"], dict):
-            input_json = component_data["input_config_json"]
-            if input_json.get("value") and not input_json.get("null", True):
-                try:
-                    component["input_mapping"] = json.loads(input_json["value"])
-                except:
-                    component["input_mapping"] = input_json["value"]
+        # Get list of example files
+        example_files = [f for f in os.listdir("/data/langchain") if f.endswith(".json")]
         
-        if component_data.get("output_config_json") and isinstance(component_data["output_config_json"], dict):
-            output_json = component_data["output_config_json"]
-            if output_json.get("value") and not output_json.get("null", True):
-                try:
-                    component["output_mapping"] = json.loads(output_json["value"])
-                except:
-                    component["output_mapping"] = output_json["value"]
-    
-    # Construct final analysis
-    analysis = {
-        "integration_id": integration_id,
-        "components": components,
-        "flow": flow,
-    }
-    
-    return analysis
+        if not example_files:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No training examples found to rebuild vectorstore"}
+            )
+        
+        # Initialize embeddings
+        embeddings = OllamaEmbeddings(
+            base_url="http://ollama:11434",
+            model="mistral"
+        )
+        
+        # Create a fresh vectorstore directory
+        vectorstore_dir = "/data/training/vectorstore"
+        if os.path.exists(vectorstore_dir):
+            # Rename existing vectorstore to backup
+            backup_dir = f"{vectorstore_dir}_backup_{int(time.time())}"
+            os.rename(vectorstore_dir, backup_dir)
+            logger.info(f"Backed up existing vectorstore to {backup_dir}")
+        
+        # Create documents from all examples
+        documents = []
+        for example_file in example_files:
+            try:
+                with open(f"/data/langchain/{example_file}", "r") as f:
+                    example_data = json.load(f)
+                    if "integration_json" in example_data and "documentation" in example_data:
+                        # Create metadata with expected documentation
+                        metadata = {"expected_documentation": example_data["documentation"]}
+                        # Create document text from integration JSON
+                        if isinstance(example_data["integration_json"], dict):
+                            doc_text = json.dumps(example_data["integration_json"])
+                        else:
+                            doc_text = str(example_data["integration_json"])
+                        documents.append(Document(page_content=doc_text, metadata=metadata))
+            except Exception as e:
+                logger.error(f"Error processing example file {example_file}: {str(e)}")
+        
+        if not documents:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No valid documents found in training examples"}
+            )
+        
+        # Create new vectorstore from documents
+        logger.info(f"Creating training vectorstore with {len(documents)} documents")
+        Chroma.from_documents(
+            documents=documents,
+            embedding=embeddings,
+            persist_directory=vectorstore_dir,
+            collection_name="training_examples"
+        )
+        
+        # Remove rebuild flag if it exists
+        if os.path.exists("/data/training/rebuild_required"):
+            os.remove("/data/training/rebuild_required")
+        
+        return {"message": f"Successfully rebuilt training vectorstore with {len(documents)} examples"}
+    except Exception as e:
+        logger.error(f"Error rebuilding vectorstore: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error rebuilding vectorstore: {str(e)}"}
+        )
 
 @app.post("/train-with-zip")
 async def train_with_zip(

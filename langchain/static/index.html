@@ -384,6 +384,51 @@
             margin-top: 5px;
             font-size: 12px;
         }
+        .action-button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        .action-button:hover {
+            background-color: #2980b9;
+        }
+        .training-examples-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .training-examples-table th {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            background-color: #f5f7fa;
+        }
+        .training-examples-table td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .delete-example-btn {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .delete-example-btn:hover {
+            background-color: #c0392b;
+        }
+        .training-management {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
     </style>
 </head>
 <body>
@@ -501,15 +546,69 @@
                 <div class="error" id="training-error"></div>
                 
                 <div class="training-status" id="training-status" style="display: none;">
-                    <h3>Training Data Status</h3>
-                    <div id="training-stats">
-                        <!-- Training status will be displayed here -->
+                    <div class="status-header">
+                        <h3>Training Data Status</h3>
+                        <div id="training-stats">
+                            <!-- Training status will be displayed here -->
+                        </div>
+                    </div>
+                    
+                    <!-- Add training data management section -->
+                    <div class="training-management">
+                        <h3>Manage Training Examples</h3>
+                        <div class="loading" id="training-management-loading" style="display: none;">
+                            <div class="spinner"></div>
+                            <p>Loading training examples...</p>
+                        </div>
+                        <div id="training-examples-list">
+                            <!-- Training examples will be listed here -->
+                        </div>
+                        <div class="error" id="training-management-error" style="display: none;"></div>
+                        <button id="rebuild-vectorstore-btn" class="action-button" style="display: none;">Rebuild Vector Database</button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <script>
+        // Make deleteTrainingExample available globally
+        function deleteTrainingExample(exampleId, integrationName) {
+            if (!confirm(`Are you sure you want to delete the training example for "${integrationName}"?`)) {
+                return;
+            }
+            
+            const trainingManagementLoading = document.getElementById('training-management-loading');
+            const trainingManagementError = document.getElementById('training-management-error');
+            
+            trainingManagementLoading.style.display = 'block';
+            trainingManagementError.style.display = 'none';
+            
+            fetch(`/training/delete/${exampleId}`, {
+                method: 'DELETE'
+            })
+            .then(response => {
+                const isOk = response.ok;
+                return response.json().then(data => ({ data, isOk }));
+            })
+            .then(({ data, isOk }) => {
+                if (isOk) {
+                    // Refresh the examples list and training status
+                    document.dispatchEvent(new CustomEvent('refreshTrainingData'));
+                } else {
+                    trainingManagementError.textContent = data.error || 'Failed to delete training example';
+                    trainingManagementError.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                trainingManagementError.textContent = 'An error occurred: ' + error.message;
+                trainingManagementError.style.display = 'block';
+            })
+            .finally(() => {
+                trainingManagementLoading.style.display = 'none';
+            });
+        }
+    </script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // Tab switching functionality
@@ -531,6 +630,7 @@
                     // If training tab is clicked, load training status
                     if (tabId === 'train') {
                         loadTrainingStatus();
+                        loadTrainingExamples(); // Load the training examples list
                     }
                 });
             });
@@ -831,7 +931,7 @@
             });
             
             function displayTrainingFile() {
-                if (trainingFile && trainingFile.name.toLowerCase().endsWith('.zip')) {
+                if (trainingFile && trainingFile.name.toLowerCase().endswith('.zip')) {
                     trainingError.style.display = 'none';
                     const reader = new FileReader();
                     
@@ -1322,8 +1422,118 @@
                 }
             }
             
+            // Load training examples listing for management
+            async function loadTrainingExamples() {
+                const trainingManagementLoading = document.getElementById('training-management-loading');
+                const trainingManagementError = document.getElementById('training-management-error');
+                const trainingExamplesList = document.getElementById('training-examples-list');
+                const rebuildVectorstoreBtn = document.getElementById('rebuild-vectorstore-btn');
+                
+                trainingManagementLoading.style.display = 'block';
+                trainingManagementError.style.display = 'none';
+                trainingExamplesList.innerHTML = '';
+                
+                try {
+                    const response = await fetch('/training/list');
+                    const data = await response.json();
+                    
+                    if (response.ok && data.examples) {
+                        if (data.examples.length > 0) {
+                            // Create a table for the examples
+                            let tableHTML = `
+                                <table class="training-examples-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Integration Name</th>
+                                            <th>Created</th>
+                                            <th>Preview</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                            `;
+                            
+                            data.examples.forEach(example => {
+                                tableHTML += `
+                                    <tr>
+                                        <td>${example.integration_name}</td>
+                                        <td>${example.created}</td>
+                                        <td>${example.preview}</td>
+                                        <td>
+                                            <button class="delete-example-btn" data-id="${example.id}" 
+                                                    onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">
+                                                Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `;
+                            });
+                            
+                            tableHTML += `
+                                    </tbody>
+                                </table>
+                            `;
+                            
+                            trainingExamplesList.innerHTML = tableHTML;
+                            rebuildVectorstoreBtn.style.display = 'block';
+                        } else {
+                            trainingExamplesList.innerHTML = '<p>No training examples found. Add some examples to improve document generation.</p>';
+                            rebuildVectorstoreBtn.style.display = 'none';
+                        }
+                    } else {
+                        trainingManagementError.textContent = data.error || 'Failed to load training examples';
+                        trainingManagementError.style.display = 'block';
+                    }
+                } catch (error) {
+                    trainingManagementError.textContent = 'An error occurred: ' + error.message;
+                    trainingManagementError.style.display = 'block';
+                } finally {
+                    trainingManagementLoading.style.display = 'none';
+                }
+            }
+            
+            // Event listener for rebuild vectorstore button
+            document.getElementById('rebuild-vectorstore-btn').addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to rebuild the vector database? This may take a few moments.')) {
+                    return;
+                }
+                
+                const trainingManagementLoading = document.getElementById('training-management-loading');
+                const trainingManagementError = document.getElementById('training-management-error');
+                
+                trainingManagementLoading.style.display = 'block';
+                trainingManagementError.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/training/rebuild-vectorstore', {
+                        method: 'POST'
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        alert('Vector database rebuilt successfully!');
+                        loadTrainingStatus();
+                    } else {
+                        trainingManagementError.textContent = data.error || 'Failed to rebuild vector database';
+                        trainingManagementError.style.display = 'block';
+                    }
+                } catch (error) {
+                    trainingManagementError.textContent = 'An error occurred: ' + error.message;
+                    trainingManagementError.style.display = 'block';
+                } finally {
+                    trainingManagementLoading.style.display = 'none';
+                }
+            });
+            
             // Initial call to load training status
             loadTrainingStatus();
+            
+            // Add event listener to refresh training data when examples are deleted
+            document.addEventListener('refreshTrainingData', () => {
+                loadTrainingExamples();
+                loadTrainingStatus();
+            });
         });
     </script>
 </body>
