@@ -289,43 +289,100 @@
         .training-file:last-child {
             border-bottom: none;
         }
-        .badge {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 10px;
-            font-size: 12px;
-            font-weight: bold;
-            color: white;
-            background-color: #3498db;
-            margin-left: 10px;
+        .metrics-dashboard {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 15px;
         }
-        .or-divider {
-            text-align: center;
-            margin: 20px 0;
-            position: relative;
-        }
-        .or-divider:before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 0;
-            right: 0;
-            height: 1px;
-            background-color: #e0e0e0;
-            z-index: 1;
-        }
-        .or-divider span {
-            display: inline-block;
-            padding: 0 15px;
+        .metric-card {
+            flex: 1;
+            min-width: 200px;
             background-color: white;
-            position: relative;
-            z-index: 2;
+            border-radius: 5px;
+            padding: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+            color: #3498db;
+        }
+        .metric-label {
+            font-size: 14px;
             color: #7f8c8d;
         }
-        .json-helper {
+        .quality-bar {
+            height: 20px;
+            display: flex;
+            border-radius: 10px;
+            overflow: hidden;
             margin-top: 10px;
-            font-size: 0.9em;
-            color: #7f8c8d;
+        }
+        .quality-high {
+            background-color: #27ae60;
+        }
+        .quality-medium {
+            background-color: #f39c12;
+        }
+        .quality-low {
+            background-color: #e74c3c;
+        }
+        .quality-legend {
+            display: flex;
+            justify-content: center;
+            margin-top: 5px;
+            font-size: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 0 5px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 2px;
+        }
+        .confidence-indicator {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 13px;
+            display: inline-block;
+        }
+        .confidence-high {
+            background-color: rgba(39, 174, 96, 0.1);
+            border: 1px solid #27ae60;
+            color: #27ae60;
+        }
+        .confidence-medium {
+            background-color: rgba(243, 156, 18, 0.1);
+            border: 1px solid #f39c12;
+            color: #f39c12;
+        }
+        .confidence-low {
+            background-color: rgba(231, 76, 60, 0.1);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+        }
+        .quality-details {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            font-size: 13px;
+        }
+        .quality-details-toggle {
+            color: #3498db;
+            cursor: pointer;
+            text-decoration: underline;
+            display: block;
+            margin-top: 5px;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -342,17 +399,29 @@
         <!-- Generate Documentation Tab -->
         <div class="tab-content active" id="generate-tab">
             <div class="card">
-                <h2>Upload Integration JSON File</h2>
-                <p>Upload a JSON file exported from your integration tool to generate human-readable documentation.</p>
+                <h2>Upload Integration Archive</h2>
+                <p>Upload a ZIP archive exported from your integration tool to generate human-readable documentation.</p>
                 
                 <div class="drag-area">
                     <h3>Drag & Drop</h3>
                     <span>Or</span>
                     <button>Browse File</button>
-                    <input type="file" hidden accept=".json">
+                    <input type="file" hidden accept=".zip">
                 </div>
                 
                 <div id="file-display"></div>
+                
+                <!-- Integration Selection Section (Added) -->
+                <div class="integration-selection" id="integration-selection">
+                    <h4>Select Integrations to Document</h4>
+                    <div class="integration-list" id="integration-list">
+                        <!-- Integrations will be listed here -->
+                    </div>
+                    <div class="select-actions">
+                        <button class="select-all-btn" id="select-all">Select All</button>
+                        <button class="deselect-all-btn" id="deselect-all">Deselect All</button>
+                    </div>
+                </div>
                 
                 <div class="format-selection">
                     <h4>Select Output Format</h4>
@@ -394,32 +463,34 @@
                 <h2>Train the Model</h2>
                 <p>Add examples to train the model to understand your integration formats better.</p>
                 
-                <div class="training-form">
-                    <div id="training-examples">
-                        <div class="training-example" data-id="1">
-                            <button class="remove-example-btn" data-id="1">Remove</button>
-                            <h4>Example 1</h4>
-                            
-                            <div>
-                                <label>Integration JSON:</label>
-                                <div class="drag-area json-drag-area">
-                                    <h3>Drag & Drop JSON File</h3>
-                                    <span>Or</span>
-                                    <button>Browse File</button>
-                                    <input type="file" hidden accept=".json" class="json-file-input">
-                                </div>
-                                <div class="json-helper">You can also paste your JSON directly:</div>
-                                <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
-                            </div>
-                            
-                            <label>Expected Documentation:</label>
-                            <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                <!-- ZIP File Upload Option for Training -->
+                <div class="training-option">
+                    <h3>Upload Integration Archive</h3>
+                    <p>Upload a ZIP archive and select a single integration to use for training.</p>
+                    
+                    <div class="drag-area training-zip-area">
+                        <h3>Drag & Drop ZIP File</h3>
+                        <span>Or</span>
+                        <button>Browse File</button>
+                        <input type="file" hidden accept=".zip" id="training-zip-input">
+                    </div>
+                    
+                    <div id="training-file-display"></div>
+                    
+                    <!-- Integration Selection for Training -->
+                    <div class="integration-selection" id="training-integration-selection" style="display: none;">
+                        <h4>Select ONE Integration for Training</h4>
+                        <div class="integration-list" id="training-integration-list">
+                            <!-- Integrations will be listed here -->
                         </div>
                     </div>
                     
-                    <button class="add-example-btn">Add Another Example</button>
-                    <br>
-                    <button class="submit-training-btn">Submit Training Data</button>
+                    <div style="margin-top: 15px;">
+                        <label>Expected Documentation:</label>
+                        <textarea id="training-doc-input" class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                    </div>
+                    
+                    <button id="submit-zip-training" class="submit-training-btn" style="display: none;">Submit Training Data</button>
                 </div>
                 
                 <div class="loading" id="training-loading">
@@ -475,9 +546,14 @@
             const loading = document.querySelector('.loading');
             const errorMessage = document.getElementById('error-message');
             const formatOptions = document.getElementsByName('output-format');
+            const integrationSelection = document.getElementById('integration-selection');
+            const integrationList = document.getElementById('integration-list');
+            const selectAllBtn = document.getElementById('select-all');
+            const deselectAllBtn = document.getElementById('deselect-all');
             
             let file;
             let uploadedFilename;
+            let integrations = [];
 
             button.onclick = () => {
                 input.click();
@@ -505,7 +581,7 @@
             });
 
             function displayFile() {
-                if (file && file.type === "application/json") {
+                if (file && file.name.toLowerCase().endsWith('.zip')) {
                     errorMessage.style.display = 'none';
                     const reader = new FileReader();
                     
@@ -519,13 +595,14 @@
                                 </div>
                             </div>
                         `;
-                        analyzeBtn.classList.add('visible');
-                        analyzeSmartBtn.classList.add('visible');
+                        
+                        // Call the new endpoint to list integrations in the ZIP
+                        uploadAndListIntegrations();
                     };
                     
                     reader.readAsDataURL(file);
                 } else {
-                    showError('Please select a valid JSON file');
+                    showError('Please select a valid ZIP archive file');
                     resetFile();
                 }
             }
@@ -535,6 +612,9 @@
                 fileDisplay.innerHTML = '';
                 analyzeBtn.classList.remove('visible');
                 analyzeSmartBtn.classList.remove('visible');
+                integrationSelection.style.display = 'none';
+                integrationList.innerHTML = '';
+                integrations = [];
                 result.innerHTML = '';
             }
 
@@ -542,6 +622,77 @@
                 errorMessage.textContent = message;
                 errorMessage.style.display = 'block';
                 loading.style.display = 'none';
+            }
+            
+            async function uploadAndListIntegrations() {
+                if (!file) return;
+                
+                loading.style.display = 'block';
+                errorMessage.style.display = 'none';
+                
+                // Upload the file first
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const uploadResponse = await fetch('/upload-zip', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const uploadData = await uploadResponse.json();
+                    
+                    if (uploadResponse.ok && uploadData.integrations) {
+                        uploadedFilename = uploadData.filename;
+                        integrations = uploadData.integrations;
+                        
+                        // Display integration selection
+                        displayIntegrationList(integrations);
+                    } else {
+                        showError(uploadData.error || 'Failed to extract integrations from the archive');
+                    }
+                } catch (error) {
+                    showError('An error occurred: ' + error.message);
+                } finally {
+                    loading.style.display = 'none';
+                }
+            }
+            
+            function displayIntegrationList(integrations) {
+                integrationList.innerHTML = '';
+                
+                if (integrations.length === 0) {
+                    integrationList.innerHTML = '<p>No integrations found in the archive.</p>';
+                    integrationSelection.style.display = 'block';
+                    return;
+                }
+                
+                integrations.forEach(integration => {
+                    const item = document.createElement('div');
+                    item.className = 'integration-item';
+                    item.innerHTML = `
+                        <input type="checkbox" id="integration-${integration.id}" value="${integration.id}" checked>
+                        <label for="integration-${integration.id}">${integration.name}</label>
+                    `;
+                    integrationList.appendChild(item);
+                });
+                
+                integrationSelection.style.display = 'block';
+                analyzeBtn.classList.add('visible');
+                analyzeSmartBtn.classList.add('visible');
+            }
+            
+            function getSelectedIntegrations() {
+                const selectedIds = [];
+                const checkboxes = integrationList.querySelectorAll('input[type="checkbox"]');
+                
+                checkboxes.forEach(checkbox => {
+                    if (checkbox.checked) {
+                        selectedIds.push(checkbox.value);
+                    }
+                });
+                
+                return selectedIds;
             }
             
             function getSelectedFormat() {
@@ -556,64 +707,55 @@
             async function analyzeFile(useSmartGeneration = false) {
                 if (!file) return;
                 
+                const selectedIntegrations = getSelectedIntegrations();
+                
+                if (selectedIntegrations.length === 0) {
+                    showError('Please select at least one integration to document');
+                    return;
+                }
+                
                 result.innerHTML = '';
                 loading.style.display = 'block';
                 errorMessage.style.display = 'none';
                 
-                // Upload the file first
-                const formData = new FormData();
-                formData.append('file', file);
-                
                 try {
-                    const uploadResponse = await fetch('/upload', {
+                    // Now analyze the file with selected integrations and format
+                    const selectedFormat = getSelectedFormat();
+                    const analyzeFormData = new FormData();
+                    analyzeFormData.append('filename', uploadedFilename);
+                    analyzeFormData.append('output_format', selectedFormat);
+                    analyzeFormData.append('integrations', JSON.stringify(selectedIntegrations));
+                    
+                    // Choose the endpoint based on whether smart generation is requested
+                    const endpoint = useSmartGeneration ? '/analyze-smart' : '/analyze-with-format';
+                    
+                    const analyzeResponse = await fetch(endpoint, {
                         method: 'POST',
-                        body: formData
+                        body: analyzeFormData
                     });
                     
-                    const uploadData = await uploadResponse.json();
+                    const analyzeData = await analyzeResponse.json();
                     
-                    if (uploadResponse.ok) {
-                        uploadedFilename = uploadData.filename;
+                    if (analyzeResponse.ok && analyzeData.documentation) {
+                        let resultHTML = `
+                            <div class="card">
+                                <h2>Integration Documentation${useSmartGeneration ? ' (Smart)' : ''}</h2>
+                                <div class="documentation">${analyzeData.documentation}</div>
+                        `;
                         
-                        // Now analyze the file with selected format
-                        const selectedFormat = getSelectedFormat();
-                        const analyzeFormData = new FormData();
-                        analyzeFormData.append('filename', uploadedFilename);
-                        analyzeFormData.append('output_format', selectedFormat);
-                        
-                        // Choose the endpoint based on whether smart generation is requested
-                        const endpoint = useSmartGeneration ? '/analyze-smart' : '/analyze-with-format';
-                        
-                        const analyzeResponse = await fetch(endpoint, {
-                            method: 'POST',
-                            body: analyzeFormData
-                        });
-                        
-                        const analyzeData = await analyzeResponse.json();
-                        
-                        if (analyzeResponse.ok && analyzeData.documentation) {
-                            let resultHTML = `
-                                <div class="card">
-                                    <h2>Integration Documentation${useSmartGeneration ? ' (Smart)' : ''}</h2>
-                                    <div class="documentation">${analyzeData.documentation}</div>
+                        // Add download button for markdown or PDF format
+                        if (analyzeData.format === 'markdown' || analyzeData.format === 'pdf') {
+                            resultHTML += `
+                                <a href="${analyzeData.download_url}" class="download-btn">
+                                    Download ${analyzeData.format === 'markdown' ? 'Markdown' : 'PDF'}
+                                </a>
                             `;
-                            
-                            // Add download button for markdown or PDF format
-                            if (analyzeData.format === 'markdown' || analyzeData.format === 'pdf') {
-                                resultHTML += `
-                                    <a href="${analyzeData.download_url}" class="download-btn">
-                                        Download ${analyzeData.format === 'markdown' ? 'Markdown' : 'PDF'}
-                                    </a>
-                                `;
-                            }
-                            
-                            resultHTML += `</div>`;
-                            result.innerHTML = resultHTML;
-                        } else {
-                            showError(analyzeData.error || 'Failed to generate documentation');
                         }
+                        
+                        resultHTML += `</div>`;
+                        result.innerHTML = resultHTML;
                     } else {
-                        showError(uploadData.error || 'Failed to upload file');
+                        showError(analyzeData.error || 'Failed to generate documentation');
                     }
                 } catch (error) {
                     showError('An error occurred: ' + error.message);
@@ -625,92 +767,248 @@
             analyzeBtn.addEventListener('click', () => analyzeFile(false));
             analyzeSmartBtn.addEventListener('click', () => analyzeFile(true));
             
+            // Select/Deselect all integrations
+            selectAllBtn.addEventListener('click', () => {
+                const checkboxes = integrationList.querySelectorAll('input[type="checkbox"]');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+            });
+            
+            deselectAllBtn.addEventListener('click', () => {
+                const checkboxes = integrationList.querySelectorAll('input[type="checkbox"]');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+            });
+            
             // Training functionality
             const trainingExamples = document.getElementById('training-examples');
             const addExampleBtn = document.querySelector('.add-example-btn');
-            const submitTrainingBtn = document.querySelector('.submit-training-btn');
+            const submitManualTrainingBtn = document.getElementById('submit-manual-training');
             const trainingLoading = document.getElementById('training-loading');
             const trainingError = document.getElementById('training-error');
             const trainingStatus = document.getElementById('training-status');
             
-            // Setup JSON file upload for training examples
-            function setupJsonFileUpload(example) {
-                const dragArea = example.querySelector('.json-drag-area');
-                const button = dragArea.querySelector('button');
-                const input = dragArea.querySelector('.json-file-input');
-                const jsonInput = example.querySelector('.json-input');
-                
-                button.onclick = () => {
-                    input.click();
-                };
-                
-                input.addEventListener('change', function() {
-                    if (this.files[0]) {
-                        processJsonFile(this.files[0], jsonInput, dragArea);
-                    }
-                });
-                
-                dragArea.addEventListener('dragover', (event) => {
-                    event.preventDefault();
-                    dragArea.classList.add('active');
-                });
-                
-                dragArea.addEventListener('dragleave', () => {
-                    dragArea.classList.remove('active');
-                });
-                
-                dragArea.addEventListener('drop', (event) => {
-                    event.preventDefault();
-                    dragArea.classList.remove('active');
-                    if (event.dataTransfer.files[0]) {
-                        processJsonFile(event.dataTransfer.files[0], jsonInput, dragArea);
-                    }
-                });
-            }
+            // Training ZIP file upload functionality
+            const trainingZipArea = document.querySelector('.training-zip-area');
+            const trainingZipButton = trainingZipArea.querySelector('button');
+            const trainingZipInput = document.getElementById('training-zip-input');
+            const trainingFileDisplay = document.getElementById('training-file-display');
+            const trainingIntegrationSelection = document.getElementById('training-integration-selection');
+            const trainingIntegrationList = document.getElementById('training-integration-list');
+            const trainingDocInput = document.getElementById('training-doc-input');
+            const submitZipTrainingBtn = document.getElementById('submit-zip-training');
             
-            function processJsonFile(file, jsonInputElement, dragAreaElement) {
-                if (file.type === "application/json") {
+            let trainingFile;
+            let trainingUploadedFilename;
+            let trainingIntegrations = [];
+            
+            // Set up training ZIP file upload
+            trainingZipButton.onclick = () => {
+                trainingZipInput.click();
+            };
+            
+            trainingZipInput.addEventListener('change', function() {
+                trainingFile = this.files[0];
+                displayTrainingFile();
+            });
+            
+            trainingZipArea.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                trainingZipArea.classList.add('active');
+            });
+            
+            trainingZipArea.addEventListener('dragleave', () => {
+                trainingZipArea.classList.remove('active');
+            });
+            
+            trainingZipArea.addEventListener('drop', (event) => {
+                event.preventDefault();
+                trainingZipArea.classList.remove('active');
+                trainingFile = event.dataTransfer.files[0];
+                displayTrainingFile();
+            });
+            
+            function displayTrainingFile() {
+                if (trainingFile && trainingFile.name.toLowerCase().endsWith('.zip')) {
+                    trainingError.style.display = 'none';
                     const reader = new FileReader();
                     
                     reader.onload = () => {
-                        try {
-                            // Format JSON for better readability
-                            const jsonData = JSON.parse(reader.result);
-                            const prettyJson = JSON.stringify(jsonData, null, 2);
-                            jsonInputElement.value = prettyJson;
-                            
-                            // Update drag area to show file is loaded
-                            dragAreaElement.innerHTML = `
-                                <h3>File Loaded</h3>
-                                <span>${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>
-                                <button>Change File</button>
-                                <input type="file" hidden accept=".json" class="json-file-input">
-                            `;
-                            
-                            // Reattach event listeners to the new button and input
-                            const newButton = dragAreaElement.querySelector('button');
-                            const newInput = dragAreaElement.querySelector('.json-file-input');
-                            
-                            newButton.onclick = () => {
-                                newInput.click();
-                            };
-                            
-                            newInput.addEventListener('change', function() {
-                                if (this.files[0]) {
-                                    processJsonFile(this.files[0], jsonInputElement, dragAreaElement);
-                                }
-                            });
-                            
-                        } catch (e) {
-                            showTrainingError(`Invalid JSON file: ${e.message}`);
-                        }
+                        const fileSize = (trainingFile.size / 1024).toFixed(2) + " KB";
+                        trainingFileDisplay.innerHTML = `
+                            <div class="file-container">
+                                <div class="file-info">
+                                    <div class="file-name">${trainingFile.name}</div>
+                                    <div class="file-size">${fileSize}</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Call the endpoint to list integrations in the ZIP
+                        uploadAndListTrainingIntegrations();
                     };
                     
-                    reader.readAsText(file);
+                    reader.readAsDataURL(trainingFile);
                 } else {
-                    showTrainingError('Please select a valid JSON file');
+                    showTrainingError('Please select a valid ZIP archive file');
+                    resetTrainingFile();
                 }
             }
+            
+            function resetTrainingFile() {
+                trainingFile = null;
+                trainingFileDisplay.innerHTML = '';
+                trainingIntegrationSelection.style.display = 'none';
+                trainingIntegrationList.innerHTML = '';
+                trainingIntegrations = [];
+                submitZipTrainingBtn.style.display = 'none';
+            }
+            
+            async function uploadAndListTrainingIntegrations() {
+                if (!trainingFile) return;
+                
+                trainingLoading.style.display = 'block';
+                trainingError.style.display = 'none';
+                
+                // Upload the file first
+                const formData = new FormData();
+                formData.append('file', trainingFile);
+                
+                try {
+                    const uploadResponse = await fetch('/upload-zip', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const uploadData = await uploadResponse.json();
+                    
+                    if (uploadResponse.ok && uploadData.integrations) {
+                        trainingUploadedFilename = uploadData.filename;
+                        trainingIntegrations = uploadData.integrations;
+                        
+                        // Display integration selection
+                        displayTrainingIntegrationList(trainingIntegrations);
+                    } else {
+                        showTrainingError(uploadData.error || 'Failed to extract integrations from the archive');
+                    }
+                } catch (error) {
+                    showTrainingError('An error occurred: ' + error.message);
+                } finally {
+                    trainingLoading.style.display = 'none';
+                }
+            }
+            
+            function displayTrainingIntegrationList(integrations) {
+                trainingIntegrationList.innerHTML = '';
+                
+                if (integrations.length === 0) {
+                    trainingIntegrationList.innerHTML = '<p>No integrations found in the archive.</p>';
+                    trainingIntegrationSelection.style.display = 'block';
+                    return;
+                }
+                
+                integrations.forEach(integration => {
+                    const item = document.createElement('div');
+                    item.className = 'integration-item';
+                    item.innerHTML = `
+                        <input type="radio" name="training-integration" id="training-integration-${integration.id}" value="${integration.id}">
+                        <label for="training-integration-${integration.id}">${integration.name}</label>
+                    `;
+                    trainingIntegrationList.appendChild(item);
+                });
+                
+                // Add change event to show submit button when an integration is selected
+                const radioButtons = trainingIntegrationList.querySelectorAll('input[type="radio"]');
+                radioButtons.forEach(radio => {
+                    radio.addEventListener('change', function() {
+                        submitZipTrainingBtn.style.display = 'block';
+                    });
+                });
+                
+                trainingIntegrationSelection.style.display = 'block';
+            }
+            
+            function getSelectedTrainingIntegration() {
+                const selectedRadio = trainingIntegrationList.querySelector('input[name="training-integration"]:checked');
+                return selectedRadio ? selectedRadio.value : null;
+            }
+            
+            // Submit ZIP training data
+            submitZipTrainingBtn.addEventListener('click', async () => {
+                const selectedIntegrationId = getSelectedTrainingIntegration();
+                const documentation = trainingDocInput.value.trim();
+                
+                // Validation
+                if (!selectedIntegrationId) {
+                    showTrainingError('Please select an integration for training');
+                    return;
+                }
+                
+                if (!documentation) {
+                    showTrainingError('Please enter the expected documentation for this integration');
+                    return;
+                }
+                
+                trainingLoading.style.display = 'block';
+                trainingError.style.display = 'none';
+                
+                try {
+                    // Get the selected integration name for display
+                    const selectedIntegrationName = trainingIntegrations.find(i => i.id === selectedIntegrationId)?.name || selectedIntegrationId;
+                    
+                    // Submit to the training endpoint
+                    const formData = new FormData();
+                    formData.append('filename', trainingUploadedFilename);
+                    formData.append('integration_id', selectedIntegrationId);
+                    formData.append('documentation', documentation);
+                    
+                    const response = await fetch('/train-with-zip', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Clear form and show success
+                        resetTrainingFile();
+                        trainingDocInput.value = '';
+                        
+                        // Reset the training ZIP upload area
+                        trainingZipArea.innerHTML = `
+                            <h3>Drag & Drop ZIP File</h3>
+                            <span>Or</span>
+                            <button>Browse File</button>
+                            <input type="file" hidden accept=".zip" id="training-zip-input">
+                        `;
+                        
+                        // Reattach event listeners
+                        const newButton = trainingZipArea.querySelector('button');
+                        const newInput = trainingZipArea.querySelector('input');
+                        
+                        newButton.onclick = () => {
+                            newInput.click();
+                        };
+                        
+                        newInput.id = 'training-zip-input';
+                        newInput.addEventListener('change', function() {
+                            trainingFile = this.files[0];
+                            displayTrainingFile();
+                        });
+                        
+                        // Refresh training status
+                        loadTrainingStatus();
+                    } else {
+                        showTrainingError(data.error || 'Failed to submit training data');
+                    }
+                } catch (error) {
+                    showTrainingError('An error occurred: ' + error.message);
+                } finally {
+                    trainingLoading.style.display = 'none';
+                }
+            });
             
             // Initialize the first example's file upload
             setupJsonFileUpload(document.querySelector('.training-example'));
@@ -792,8 +1090,8 @@
                 removeExample(this);
             });
             
-            // Submit training data
-            submitTrainingBtn.addEventListener('click', async () => {
+            // Submit manual training data
+            submitManualTrainingBtn.addEventListener('click', async () => {
                 const examples = trainingExamples.querySelectorAll('.training-example');
                 const trainingData = {
                     examples: []
@@ -892,7 +1190,49 @@
                         let statsHTML = '';
                         
                         if (data.total_examples > 0) {
-                            statsHTML += `<p>You have ${data.total_examples} training examples in ${data.total_files} files.</p>`;
+                            // Add metrics dashboard
+                            statsHTML += `
+                            <div class="metrics-dashboard">
+                                <div class="metric-card">
+                                    <div class="metric-label">Total Training Examples</div>
+                                    <div class="metric-value">${data.total_examples}</div>
+                                    <div class="metric-description">Total number of training examples available</div>
+                                </div>
+                                
+                                <div class="metric-card">
+                                    <div class="metric-label">Training Files</div>
+                                    <div class="metric-value">${data.total_files}</div>
+                                    <div class="metric-description">Different integration types with training</div>
+                                </div>`;
+                            
+                            // Add quality metrics if available
+                            if (data.quality_available) {
+                                statsHTML += `
+                                <div class="metric-card">
+                                    <div class="metric-label">Training Quality</div>
+                                    <div class="quality-bar">
+                                        <div class="quality-high" style="width: ${data.quality_metrics.high_percent}%"></div>
+                                        <div class="quality-medium" style="width: ${data.quality_metrics.medium_percent}%"></div>
+                                        <div class="quality-low" style="width: ${data.quality_metrics.low_percent}%"></div>
+                                    </div>
+                                    <div class="quality-legend">
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-high"></div>
+                                            <span>High (${data.quality_metrics.high_percent}%)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-medium"></div>
+                                            <span>Medium (${data.quality_metrics.medium_percent}%)</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-low"></div>
+                                            <span>Low (${data.quality_metrics.low_percent}%)</span>
+                                        </div>
+                                    </div>
+                                </div>`;
+                            }
+                            
+                            statsHTML += `</div>`;
                             
                             if (data.vectorstore_exists) {
                                 statsHTML += `<p><span class="badge" style="background-color:#27ae60">READY</span> Vector store is initialized and ready for smart document generation.</p>`;
@@ -900,13 +1240,69 @@
                                 statsHTML += `<p><span class="badge" style="background-color:#e74c3c">NOT READY</span> Vector store is not yet initialized.</p>`;
                             }
                             
-                            statsHTML += `<h4>Training Files:</h4>`;
+                            // Show training file details with quality
+                            statsHTML += `<h4>Training Data Details:</h4>`;
                             statsHTML += `<div class="training-files">`;
                             
                             data.files.forEach(file => {
+                                let qualityIndicator = '';
+                                
+                                if (file.quality !== undefined) {
+                                    let qualityClass = '';
+                                    let qualityText = '';
+                                    
+                                    if (file.quality >= 0.8) {
+                                        qualityClass = 'confidence-high';
+                                        qualityText = 'High';
+                                    } else if (file.quality >= 0.5) {
+                                        qualityClass = 'confidence-medium';
+                                        qualityText = 'Medium';
+                                    } else {
+                                        qualityClass = 'confidence-low';
+                                        qualityText = 'Low';
+                                    }
+                                    
+                                    qualityIndicator = `<span class="confidence-indicator ${qualityClass}">Quality: ${qualityText} (${Math.round(file.quality * 100)}%)</span>`;
+                                    
+                                    // Add toggle for individual examples if they exist
+                                    if (file.individual_examples && file.individual_examples.length > 0) {
+                                        qualityIndicator += `
+                                        <span class="quality-details-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                                            Show/Hide ${file.examples} examples
+                                        </span>
+                                        <div class="quality-details" style="display: none;">
+                                            <strong>${file.file} Examples:</strong><br>`;
+                                            
+                                        file.individual_examples.forEach(example => {
+                                            let exampleQualityClass = '';
+                                            let exampleQualityText = '';
+                                            
+                                            if (example.quality >= 0.8) {
+                                                exampleQualityClass = 'confidence-high';
+                                                exampleQualityText = 'High';
+                                            } else if (example.quality >= 0.5) {
+                                                exampleQualityClass = 'confidence-medium';
+                                                exampleQualityText = 'Medium';
+                                            } else {
+                                                exampleQualityClass = 'confidence-low';
+                                                exampleQualityText = 'Low';
+                                            }
+                                            
+                                            qualityIndicator += `
+                                            <div>
+                                                ${example.filename.split('_')[0]} - 
+                                                <span class="${exampleQualityClass}">${exampleQualityText} (${Math.round(example.quality * 100)}%)</span>
+                                            </div>`;
+                                        });
+                                        
+                                        qualityIndicator += `</div>`;
+                                    }
+                                }
+                                
                                 statsHTML += `
                                     <div class="training-file">
-                                        ${file.examples} examples, created on ${file.created}
+                                        <strong>${file.file}</strong>: ${file.examples} example${file.examples > 1 ? 's' : ''}, created on ${file.created}
+                                        ${qualityIndicator}
                                     </div>
                                 `;
                             });
