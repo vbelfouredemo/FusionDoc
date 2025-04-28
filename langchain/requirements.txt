@@ -17,3 +17,8 @@ urllib3>=2.0.7
 html2text>=2024.2.26
 # Link extraction and crawling
 lxml>=4.9.3
+# JavaScript-heavy site scraping
+playwright>=1.41.1
+# Keep selenium as optional if needed
+selenium>=4.11.2
+webdriver-manager>=4.0.0
