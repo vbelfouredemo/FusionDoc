@@ -550,6 +550,30 @@
             border-radius: 4px;
             border: 1px solid #dee2e6;
         }
+        
+        /* Styles for sub-tabs */
+        .sub-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #e1e4e8;
+        }
+        .sub-tab {
+            padding: 8px 16px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            font-weight: 500;
+            margin-right: 10px;
+        }
+        .sub-tab.active {
+            border-bottom: 2px solid #3498db;
+            color: #3498db;
+        }
+        .sub-tab-content {
+            display: none;
+        }
+        .sub-tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -629,34 +653,113 @@
                 <h2>Train the Model</h2>
                 <p>Add examples to train the model to understand your integration formats better.</p>
                 
-                <!-- ZIP File Upload Option for Training -->
-                <div class="training-option">
-                    <h3>Upload Integration Archive</h3>
-                    <p>Upload a ZIP archive and select a single integration to use for training.</p>
-                    
-                    <div class="drag-area training-zip-area">
-                        <h3>Drag & Drop ZIP File</h3>
-                        <span>Or</span>
-                        <button>Browse File</button>
-                        <input type="file" hidden accept=".zip" id="training-zip-input">
+                <!-- Add sub-tabs for training methods -->
+                <div class="sub-tabs">
+                    <div class="sub-tab active" data-subtab="integration-upload">Upload Integration Archive</div>
+                    <div class="sub-tab" data-subtab="web-documentation">Web Documentation</div>
+                </div>
+                
+                <!-- Integration Upload Sub-tab Content -->
+                <div class="sub-tab-content active" id="integration-upload-content">
+                    <!-- ZIP File Upload Option for Training -->
+                    <div class="training-option">
+                        <h3>Upload Integration Archive</h3>
+                        <p>Upload a ZIP archive and select a single integration to use for training.</p>
+                        
+                        <div class="drag-area training-zip-area">
+                            <h3>Drag & Drop ZIP File</h3>
+                            <span>Or</span>
+                            <button>Browse File</button>
+                            <input type="file" hidden accept=".zip" id="training-zip-input">
+                        </div>
+                        
+                        <div id="training-file-display"></div>
+                        
+                        <!-- Integration Selection for Training -->
+                        <div class="integration-selection" id="training-integration-selection" style="display: none;">
+                            <h4>Select ONE Integration for Training</h4>
+                            <div class="integration-list" id="training-integration-list">
+                                <!-- Integrations will be listed here -->
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 15px;">
+                            <label>Expected Documentation:</label>
+                            <textarea id="training-doc-input" class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                        </div>
+                        
+                        <button id="submit-zip-training" class="submit-training-btn" style="display: none;">Submit Training Data</button>
                     </div>
-                    
-                    <div id="training-file-display"></div>
-                    
-                    <!-- Integration Selection for Training -->
-                    <div class="integration-selection" id="training-integration-selection" style="display: none;">
-                        <h4>Select ONE Integration for Training</h4>
-                        <div class="integration-list" id="training-integration-list">
-                            <!-- Integrations will be listed here -->
+                </div>
+                
+                <!-- Web Documentation Sub-tab Content -->
+                <div class="sub-tab-content" id="web-documentation-content">
+                    <!-- Web-based Training Section -->
+                    <div class="web-training-container">
+                        <h3>Web Documentation as Training Data</h3>
+                        <p>Use product documentation from a website to train the model. The system will crawl the website and extract content for training.</p>
+                        
+                        <div class="web-training-form">
+                            <div class="form-group">
+                                <label for="web-url">Website URL:</label>
+                                <input type="text" id="web-url" placeholder="https://docs.example.com/product/">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="web-title">Training Title:</label>
+                                <input type="text" id="web-title" placeholder="Product Documentation">
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="max-depth">Max Crawl Depth:</label>
+                                    <input type="number" id="max-depth" value="2" min="1" max="5">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="max-pages">Max Pages to Crawl:</label>
+                                    <input type="number" id="max-pages" value="20" min="5" max="100">
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>URL Patterns to Include:</label>
+                                <div id="include-patterns" class="pattern-container">
+                                    <div class="pattern-input">
+                                        <input type="text" placeholder="/docs/, /api/, etc.">
+                                        <button class="remove-pattern-btn">-</button>
+                                    </div>
+                                </div>
+                                <button class="add-pattern-btn" id="add-include-pattern">+ Add Include Pattern</button>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>URL Patterns to Exclude:</label>
+                                <div id="exclude-patterns" class="pattern-container">
+                                    <div class="pattern-input">
+                                        <input type="text" placeholder="/blog/, /forum/, etc.">
+                                        <button class="remove-pattern-btn">-</button>
+                                    </div>
+                                </div>
+                                <button class="add-pattern-btn" id="add-exclude-pattern">+ Add Exclude Pattern</button>
+                            </div>
+                            
+                            <button id="start-web-crawl" class="submit-training-btn">Start Web Crawl</button>
+                        </div>
+                        
+                        <div class="loading" id="web-crawl-loading" style="display: none;">
+                            <div class="spinner"></div>
+                            <p>Crawling website... This may take several minutes.</p>
+                        </div>
+                        
+                        <div class="error" id="web-crawl-error" style="display: none;"></div>
+                        
+                        <div class="web-crawl-results" id="web-crawl-results">
+                            <h4>Crawl Results</h4>
+                            <div id="crawl-stats"></div>
+                            <div class="url-list" id="crawled-urls"></div>
                         </div>
                     </div>
-                    
-                    <div style="margin-top: 15px;">
-                        <label>Expected Documentation:</label>
-                        <textarea id="training-doc-input" class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
-                    </div>
-                    
-                    <button id="submit-zip-training" class="submit-training-btn" style="display: none;">Submit Training Data</button>
                 </div>
                 
                 <div class="loading" id="training-loading">
@@ -666,7 +769,8 @@
                 
                 <div class="error" id="training-error"></div>
                 
-                <div class="training-status" id="training-status" style="display: none;">
+                <!-- Training Data Status - Moved to bottom -->
+                <div class="training-status" id="training-status" style="display: none; margin-top: 30px;">
                     <div class="status-header">
                         <h3>Training Data Status</h3>
                         <div id="training-stats">
@@ -686,106 +790,6 @@
                         </div>
                         <div class="error" id="training-management-error" style="display: none;"></div>
                         <button id="rebuild-vectorstore-btn" class="action-button" style="display: none;">Rebuild Vector Database</button>
-                    </div>
-                </div>
-                
-                <!-- Manual Training Examples Section -->
-                <div class="training-option">
-                    <h3>Manual Training Examples</h3>
-                    <p>Add examples of integration JSON and expected documentation manually.</p>
-                    
-                    <div class="training-form">
-                        <div id="training-examples">
-                            <div class="training-example" data-id="1">
-                                <button class="remove-example-btn" data-id="1">Remove</button>
-                                <h4>Example 1</h4>
-                                
-                                <div>
-                                    <label>Integration JSON:</label>
-                                    <div class="drag-area json-drag-area">
-                                        <h3>Drag & Drop JSON File</h3>
-                                        <span>Or</span>
-                                        <button>Browse File</button>
-                                        <input type="file" hidden accept=".json" class="json-file-input">
-                                    </div>
-                                    <div class="json-helper">You can also paste your JSON directly:</div>
-                                    <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
-                                </div>
-                                
-                                <label>Expected Documentation:</label>
-                                <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
-                            </div>
-                        </div>
-                        
-                        <button class="add-example-btn">+ Add Another Example</button>
-                        <button id="submit-manual-training" class="submit-training-btn">Submit Training Data</button>
-                    </div>
-                </div>
-                
-                <!-- Web-based Training Section -->
-                <div class="web-training-container">
-                    <h3>Web Documentation as Training Data</h3>
-                    <p>Use product documentation from a website to train the model. The system will crawl the website and extract content for training.</p>
-                    
-                    <div class="web-training-form">
-                        <div class="form-group">
-                            <label for="web-url">Website URL:</label>
-                            <input type="text" id="web-url" placeholder="https://docs.example.com/product/">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="web-title">Training Title:</label>
-                            <input type="text" id="web-title" placeholder="Product Documentation">
-                        </div>
-                        
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="max-depth">Max Crawl Depth:</label>
-                                <input type="number" id="max-depth" value="2" min="1" max="5">
-                            </div>
-                            
-                            <div class="form-group">
-                                <label for="max-pages">Max Pages to Crawl:</label>
-                                <input type="number" id="max-pages" value="20" min="5" max="100">
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>URL Patterns to Include:</label>
-                            <div id="include-patterns" class="pattern-container">
-                                <div class="pattern-input">
-                                    <input type="text" placeholder="/docs/, /api/, etc.">
-                                    <button class="remove-pattern-btn">-</button>
-                                </div>
-                            </div>
-                            <button class="add-pattern-btn" id="add-include-pattern">+ Add Include Pattern</button>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>URL Patterns to Exclude:</label>
-                            <div id="exclude-patterns" class="pattern-container">
-                                <div class="pattern-input">
-                                    <input type="text" placeholder="/blog/, /forum/, etc.">
-                                    <button class="remove-pattern-btn">-</button>
-                                </div>
-                            </div>
-                            <button class="add-pattern-btn" id="add-exclude-pattern">+ Add Exclude Pattern</button>
-                        </div>
-                        
-                        <button id="start-web-crawl" class="submit-training-btn">Start Web Crawl</button>
-                    </div>
-                    
-                    <div class="loading" id="web-crawl-loading" style="display: none;">
-                        <div class="spinner"></div>
-                        <p>Crawling website... This may take several minutes.</p>
-                    </div>
-                    
-                    <div class="error" id="web-crawl-error" style="display: none;"></div>
-                    
-                    <div class="web-crawl-results" id="web-crawl-results">
-                        <h4>Crawl Results</h4>
-                        <div id="crawl-stats"></div>
-                        <div class="url-list" id="crawled-urls"></div>
                     </div>
                 </div>
             </div>
@@ -853,6 +857,24 @@
                         loadTrainingStatus();
                         loadTrainingExamples(); // Load the training examples list
                     }
+                });
+            });
+            
+            // Subtab switching functionality
+            const subTabs = document.querySelectorAll('.sub-tab');
+            const subTabContents = document.querySelectorAll('.sub-tab-content');
+            
+            subTabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const subTabId = tab.getAttribute('data-subtab');
+                    
+                    // Remove active class from all subtabs and subtab contents
+                    subTabs.forEach(t => t.classList.remove('active'));
+                    subTabContents.forEach(c => c.classList.remove('active'));
+                    
+                    // Add active class to clicked subtab and corresponding content
+                    tab.classList.add('active');
+                    document.getElementById(`${subTabId}-content`).classList.add('active');
                 });
             });
             
@@ -1143,7 +1165,7 @@
             trainingZipArea.addEventListener('dragleave', () => {
                 trainingZipArea.classList.remove('active');
             });
-            
+
             trainingZipArea.addEventListener('drop', (event) => {
                 event.preventDefault();
                 trainingZipArea.classList.remove('active');
@@ -1330,480 +1352,6 @@
                     trainingLoading.style.display = 'none';
                 }
             });
-            
-            // Initialize the first example's file upload
-            setupJsonFileUpload(document.querySelector('.training-example'));
-            
-            // Add example event
-            addExampleBtn.addEventListener('click', () => {
-                const exampleCount = trainingExamples.children.length + 1;
-                const newExample = document.createElement('div');
-                newExample.className = 'training-example';
-                newExample.setAttribute('data-id', exampleCount);
-                
-                newExample.innerHTML = `
-                    <button class="remove-example-btn" data-id="${exampleCount}">Remove</button>
-                    <h4>Example ${exampleCount}</h4>
-                    
-                    <div>
-                        <label>Integration JSON:</label>
-                        <div class="drag-area json-drag-area">
-                            <h3>Drag & Drop JSON File</h3>
-                            <span>Or</span>
-                            <button>Browse File</button>
-                            <input type="file" hidden accept=".json" class="json-file-input">
-                        </div>
-                        <div class="json-helper">You can also paste your JSON directly:</div>
-                        <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
-                    </div>
-                    
-                    <label>Expected Documentation:</label>
-                    <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
-                `;
-                
-                trainingExamples.appendChild(newExample);
-                
-                // Setup file upload for the new example
-                setupJsonFileUpload(newExample);
-                
-                // Add remove event to the new button
-                newExample.querySelector('.remove-example-btn').addEventListener('click', function() {
-                    removeExample(this);
-                });
-            });
-            
-            // Remove example function
-            function removeExample(button) {
-                const exampleId = button.getAttribute('data-id');
-                const example = document.querySelector(`.training-example[data-id="${exampleId}"]`);
-                
-                if (trainingExamples.children.length > 1) {
-                    example.remove();
-                    
-                    // Renumber remaining examples
-                    const examples = trainingExamples.querySelectorAll('.training-example');
-                    examples.forEach((ex, index) => {
-                        ex.setAttribute('data-id', index + 1);
-                        ex.querySelector('h4').textContent = `Example ${index + 1}`;
-                        ex.querySelector('.remove-example-btn').setAttribute('data-id', index + 1);
-                    });
-                } else {
-                    // Don't remove the last example, just clear it
-                    example.querySelector('.json-input').value = '';
-                    example.querySelector('.documentation-input').value = '';
-                    
-                    // Reset the drag area
-                    const dragArea = example.querySelector('.json-drag-area');
-                    dragArea.innerHTML = `
-                        <h3>Drag & Drop JSON File</h3>
-                        <span>Or</span>
-                        <button>Browse File</button>
-                        <input type="file" hidden accept=".json" class="json-file-input">
-                    `;
-                    
-                    // Reattach file upload functionality
-                    setupJsonFileUpload(example);
-                }
-            }
-            
-            // Add remove event to initial example
-            document.querySelector('.remove-example-btn').addEventListener('click', function() {
-                removeExample(this);
-            });
-            
-            // Submit manual training data
-            submitManualTrainingBtn.addEventListener('click', async () => {
-                const examples = trainingExamples.querySelectorAll('.training-example');
-                const trainingData = {
-                    examples: []
-                };
-                
-                // Validate and collect examples
-                for (const example of examples) {
-                    const jsonInput = example.querySelector('.json-input').value;
-                    const docInput = example.querySelector('.documentation-input').value;
-                    
-                    if (!jsonInput || !docInput) {
-                        showTrainingError('All examples must have both JSON and documentation filled out.');
-                        return;
-                    }
-                    
-                    try {
-                        const jsonData = JSON.parse(jsonInput);
-                        trainingData.examples.push({
-                            integration_json: jsonData,
-                            documentation: docInput
-                        });
-                    } catch (e) {
-                        showTrainingError(`Invalid JSON in example ${example.querySelector('h4').textContent}: ${e.message}`);
-                        return;
-                    }
-                }
-                
-                if (trainingData.examples.length === 0) {
-                    showTrainingError('Please add at least one training example.');
-                    return;
-                }
-                
-                // Submit training data
-                trainingLoading.style.display = 'block';
-                trainingError.style.display = 'none';
-                
-                try {
-                    const response = await fetch('/train', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(trainingData)
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok) {
-                        // Clear form and show success
-                        examples.forEach((example, index) => {
-                            if (index > 0) {
-                                example.remove();
-                            } else {
-                                example.querySelector('.json-input').value = '';
-                                example.querySelector('.documentation-input').value = '';
-                                
-                                // Reset the drag area
-                                const dragArea = example.querySelector('.json-drag-area');
-                                dragArea.innerHTML = `
-                                    <h3>Drag & Drop JSON File</h3>
-                                    <span>Or</span>
-                                    <button>Browse File</button>
-                                    <input type="file" hidden accept=".json" class="json-file-input">
-                                `;
-                                
-                                // Reattach file upload functionality
-                                setupJsonFileUpload(example);
-                            }
-                        });
-                        
-                        // Refresh training status
-                        loadTrainingStatus();
-                    } else {
-                        showTrainingError(data.error || 'Failed to submit training data');
-                    }
-                } catch (error) {
-                    showTrainingError('An error occurred: ' + error.message);
-                } finally {
-                    trainingLoading.style.display = 'none';
-                }
-            });
-            
-            function showTrainingError(message) {
-                trainingError.textContent = message;
-                trainingError.style.display = 'block';
-                trainingLoading.style.display = 'none';
-            }
-            
-            // Load training status
-            async function loadTrainingStatus() {
-                try {
-                    const response = await fetch('/training/status');
-                    const data = await response.json();
-                    
-                    if (response.ok) {
-                        let statsHTML = '';
-                        
-                        if (data.total_examples > 0) {
-                            // Add metrics dashboard
-                            statsHTML += `
-                            <div class="metrics-dashboard">
-                                <div class="metric-card">
-                                    <div class="metric-label">Total Training Examples</div>
-                                    <div class="metric-value">${data.total_examples}</div>
-                                    <div class="metric-description">Total number of training examples available</div>
-                                </div>
-                                
-                                <div class="metric-card">
-                                    <div class="metric-label">Training Files</div>
-                                    <div class="metric-value">${data.total_files}</div>
-                                    <div class="metric-description">Different integration types with training</div>
-                                </div>`;
-                            
-                            // Add quality metrics if available
-                            if (data.quality_available) {
-                                statsHTML += `
-                                <div class="metric-card">
-                                    <div class="metric-label">Training Quality</div>
-                                    <div class="quality-bar">
-                                        <div class="quality-high" style="width: ${data.quality_metrics.high_percent}%"></div>
-                                        <div class="quality-medium" style="width: ${data.quality_metrics.medium_percent}%"></div>
-                                        <div class="quality-low" style="width: ${data.quality_metrics.low_percent}%"></div>
-                                    </div>
-                                    <div class="quality-legend">
-                                        <div class="legend-item">
-                                            <div class="legend-color quality-high"></div>
-                                            <span>High (${data.quality_metrics.high_percent}%)</span>
-                                        </div>
-                                        <div class="legend-item">
-                                            <div class="legend-color quality-medium"></div>
-                                            <span>Medium (${data.quality_metrics.medium_percent}%)</span>
-                                        </div>
-                                        <div class="legend-item">
-                                            <div class="legend-color quality-low"></div>
-                                            <span>Low (${data.quality_metrics.low_percent}%)</span>
-                                        </div>
-                                    </div>
-                                </div>`;
-                            }
-                            
-                            statsHTML += `</div>`;
-                            
-                            if (data.vectorstore_exists) {
-                                statsHTML += `<p><span class="badge" style="background-color:#27ae60">READY</span> Vector store is initialized and ready for smart document generation.</p>`;
-                            } else {
-                                statsHTML += `<p><span class="badge" style="background-color:#e74c3c">NOT READY</span> Vector store is not yet initialized.</p>`;
-                            }
-                            
-                            // Show training file details with quality
-                            statsHTML += `<h4>Training Data Details:</h4>`;
-                            statsHTML += `<div class="training-files">`;
-                            
-                            data.files.forEach(file => {
-                                let qualityIndicator = '';
-                                
-                                if (file.quality !== undefined) {
-                                    let qualityClass = '';
-                                    let qualityText = '';
-                                    
-                                    if (file.quality >= 0.8) {
-                                        qualityClass = 'confidence-high';
-                                        qualityText = 'High';
-                                    } else if (file.quality >= 0.5) {
-                                        qualityClass = 'confidence-medium';
-                                        qualityText = 'Medium';
-                                    } else {
-                                        qualityClass = 'confidence-low';
-                                        qualityText = 'Low';
-                                    }
-                                    
-                                    qualityIndicator = `<span class="confidence-indicator ${qualityClass}">Quality: ${qualityText} (${Math.round(file.quality * 100)}%)</span>`;
-                                    
-                                    // Add toggle for individual examples if they exist
-                                    if (file.individual_examples && file.individual_examples.length > 0) {
-                                        qualityIndicator += `
-                                        <span class="quality-details-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                                            Show/Hide ${file.examples} examples
-                                        </span>
-                                        <div class="quality-details" style="display: none;">
-                                            <strong>${file.file} Examples:</strong><br>`;
-                                            
-                                        file.individual_examples.forEach(example => {
-                                            let exampleQualityClass = '';
-                                            let exampleQualityText = '';
-                                            
-                                            if (example.quality >= 0.8) {
-                                                exampleQualityClass = 'confidence-high';
-                                                exampleQualityText = 'High';
-                                            } else if (example.quality >= 0.5) {
-                                                exampleQualityClass = 'confidence-medium';
-                                                exampleQualityText = 'Medium';
-                                            } else {
-                                                exampleQualityClass = 'confidence-low';
-                                                exampleQualityText = 'Low';
-                                            }
-                                            
-                                            qualityIndicator += `
-                                            <div>
-                                                ${example.filename.split('_')[0]} - 
-                                                <span class="${exampleQualityClass}">${exampleQualityText} (${Math.round(example.quality * 100)}%)</span>
-                                            </div>`;
-                                        });
-                                        
-                                        qualityIndicator += `</div>`;
-                                    }
-                                }
-                                
-                                statsHTML += `
-                                    <div class="training-file">
-                                        <strong>${file.file}</strong>: ${file.examples} example${file.examples > 1 ? 's' : ''}, created on ${file.created}
-                                        ${qualityIndicator}
-                                    </div>
-                                `;
-                            });
-                            
-                            statsHTML += `</div>`;
-                        } else {
-                            statsHTML = `<p>No training data available. Add some examples to improve document generation.</p>`;
-                        }
-                        
-                        document.getElementById('training-stats').innerHTML = statsHTML;
-                        trainingStatus.style.display = 'block';
-                    } else {
-                        trainingStatus.style.display = 'none';
-                    }
-                } catch (error) {
-                    console.error('Error loading training status:', error);
-                }
-            }
-            
-            // Load training examples listing for management with pagination
-            let allTrainingExamples = []; // Store all examples
-            let currentPage = 1;
-            let itemsPerPage = 5; // Default items per page
-            
-            async function loadTrainingExamples() {
-                const trainingManagementLoading = document.getElementById('training-management-loading');
-                const trainingManagementError = document.getElementById('training-management-error');
-                const trainingExamplesList = document.getElementById('training-examples-list');
-                const rebuildVectorstoreBtn = document.getElementById('rebuild-vectorstore-btn');
-                
-                trainingManagementLoading.style.display = 'block';
-                trainingManagementError.style.display = 'none';
-                trainingExamplesList.innerHTML = '';
-                
-                try {
-                    const response = await fetch('/training/list');
-                    const data = await response.json();
-                    
-                    if (response.ok && data.examples) {
-                        if (data.examples.length > 0) {
-                            // Store all examples for pagination
-                            allTrainingExamples = data.examples;
-                            
-                            // Render the paginated view
-                            renderPaginatedExamples();
-                            
-                            rebuildVectorstoreBtn.style.display = 'block';
-                        } else {
-                            trainingExamplesList.innerHTML = '<p>No training examples found. Add some examples to improve document generation.</p>';
-                            rebuildVectorstoreBtn.style.display = 'none';
-                        }
-                    } else {
-                        trainingManagementError.textContent = data.error || 'Failed to load training examples';
-                        trainingManagementError.style.display = 'block';
-                    }
-                } catch (error) {
-                    trainingManagementError.textContent = 'An error occurred: ' + error.message;
-                    trainingManagementError.style.display = 'block';
-                } finally {
-                    trainingManagementLoading.style.display = 'none';
-                }
-            }
-            
-            // Render examples with pagination
-            function renderPaginatedExamples() {
-                const trainingExamplesList = document.getElementById('training-examples-list');
-                
-                // Calculate pagination values
-                const totalItems = allTrainingExamples.length;
-                const totalPages = Math.ceil(totalItems / itemsPerPage);
-                
-                // Make sure current page is in valid range
-                if (currentPage > totalPages) {
-                    currentPage = totalPages;
-                }
-                if (currentPage < 1) {
-                    currentPage = 1;
-                }
-                
-                // Calculate start and end index for current page
-                const startIndex = (currentPage - 1) * itemsPerPage;
-                const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
-                
-                // Get examples for current page
-                const currentExamples = allTrainingExamples.slice(startIndex, endIndex);
-                
-                // Create table HTML
-                let tableHTML = `
-                    <table class="training-examples-table">
-                        <thead>
-                            <tr>
-                                <th>Integration Name</th>
-                                <th>Created</th>
-                                <th>Preview</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-                
-                currentExamples.forEach(example => {
-                    tableHTML += `
-                        <tr>
-                            <td>${example.integration_name}</td>
-                            <td>${example.created}</td>
-                            <td>${example.preview}</td>
-                            <td>
-                                <button class="delete-example-btn" data-id="${example.id}" 
-                                        onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">
-                                    Delete
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-                
-                tableHTML += `
-                        </tbody>
-                    </table>
-                `;
-                
-                // Add pagination controls
-                tableHTML += `
-                    <div class="pagination-controls">
-                        <div class="pagination-buttons">
-                            <button class="page-button ${currentPage === 1 ? 'disabled' : ''}" 
-                                    ${currentPage === 1 ? 'disabled' : ''} 
-                                    onclick="changePage(1)">First</button>
-                            <button class="page-button ${currentPage === 1 ? 'disabled' : ''}" 
-                                    ${currentPage === 1 ? 'disabled' : ''} 
-                                    onclick="changePage(${currentPage - 1})">Previous</button>
-                `;
-                
-                // Page numbers (up to 5 page numbers shown)
-                const pageWindow = 2; // Show 2 pages before and after current page
-                const startPage = Math.max(1, currentPage - pageWindow);
-                const endPage = Math.min(totalPages, currentPage + pageWindow);
-                
-                for (let i = startPage; i <= endPage; i++) {
-                    tableHTML += `
-                        <button class="page-button ${i === currentPage ? 'active' : ''}" 
-                                onclick="changePage(${i})">${i}</button>
-                    `;
-                }
-                
-                tableHTML += `
-                            <button class="page-button ${currentPage === totalPages ? 'disabled' : ''}" 
-                                    ${currentPage === totalPages ? 'disabled' : ''} 
-                                    onclick="changePage(${currentPage + 1})">Next</button>
-                            <button class="page-button ${currentPage === totalPages ? 'disabled' : ''}" 
-                                    ${currentPage === totalPages ? 'disabled' : ''} 
-                                    onclick="changePage(${totalPages})">Last</button>
-                        </div>
-                        <div class="per-page-selector">
-                            <label for="items-per-page">Show:</label>
-                            <select id="items-per-page" onchange="changeItemsPerPage(this.value)">
-                                <option value="5" ${itemsPerPage === 5 ? 'selected' : ''}>5</option>
-                                <option value="10" ${itemsPerPage === 10 ? 'selected' : ''}>10</option>
-                                <option value="20" ${itemsPerPage === 20 ? 'selected' : ''}>20</option>
-                                <option value="50" ${itemsPerPage === 50 ? 'selected' : ''}>50</option>
-                            </select>
-                            <span>per page | Showing ${startIndex + 1}-${endIndex} of ${totalItems}</span>
-                        </div>
-                    </div>
-                `;
-                
-                trainingExamplesList.innerHTML = tableHTML;
-            }
-            
-            // Make pagination functions globally available
-            window.changePage = function(page) {
-                currentPage = page;
-                renderPaginatedExamples();
-            };
-            
-            window.changeItemsPerPage = function(items) {
-                itemsPerPage = parseInt(items);
-                currentPage = 1; // Reset to first page when changing items per page
-                renderPaginatedExamples();
-            };
             
             // Add event listener for the rebuild vector database button
             const rebuildVectorstoreBtn = document.getElementById('rebuild-vectorstore-btn');
@@ -2032,66 +1580,167 @@
                 webCrawlLoading.style.display = 'none';
             }
             
-            // Helper function for JSON file upload in training examples
-            function setupJsonFileUpload(example) {
-                const dragArea = example.querySelector('.json-drag-area');
-                const button = dragArea.querySelector('button');
-                const input = dragArea.querySelector('input');
-                const jsonInput = example.querySelector('.json-input');
-                
-                button.onclick = () => {
-                    input.click();
-                };
-                
-                input.addEventListener('change', function() {
-                    const file = this.files[0];
-                    if (file && file.name.endsWith('.json')) {
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            try {
-                                // Parse JSON to verify it's valid
-                                const jsonObj = JSON.parse(e.target.result);
-                                // Format it nicely for display
-                                jsonInput.value = JSON.stringify(jsonObj, null, 2);
-                            } catch (error) {
-                                alert("Invalid JSON file: " + error.message);
-                            }
-                        };
-                        reader.readAsText(file);
-                    }
-                });
-                
-                dragArea.addEventListener('dragover', (event) => {
-                    event.preventDefault();
-                    dragArea.classList.add('active');
-                });
-                
-                dragArea.addEventListener('dragleave', () => {
-                    dragArea.classList.remove('active');
-                });
-
-                dragArea.addEventListener('drop', (event) => {
-                    event.preventDefault();
-                    dragArea.classList.remove('active');
-                    const file = event.dataTransfer.files[0];
-                    if (file && file.name.endsWith('.json')) {
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            try {
-                                // Parse JSON to verify it's valid
-                                const jsonObj = JSON.parse(e.target.result);
-                                // Format it nicely for display
-                                jsonInput.value = JSON.stringify(jsonObj, null, 2);
-                            } catch (error) {
-                                alert("Invalid JSON file: " + error.message);
-                            }
-                        };
-                        reader.readAsText(file);
-                    } else {
-                        alert("Please upload a JSON file");
-                    }
-                });
+            // Function to show training errors
+            function showTrainingError(message) {
+                trainingError.textContent = message;
+                trainingError.style.display = 'block';
+                trainingLoading.style.display = 'none';
             }
+            
+            // Load training status from the server
+            async function loadTrainingStatus() {
+                const trainingStatus = document.getElementById('training-status');
+                const trainingStats = document.getElementById('training-stats');
+                const rebuildVectorstoreBtn = document.getElementById('rebuild-vectorstore-btn');
+                
+                try {
+                    trainingLoading.style.display = 'block';
+                    trainingError.style.display = 'none';
+                    
+                    const response = await fetch('/training/status');
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Show the training status section
+                        trainingStatus.style.display = 'block';
+                        
+                        // Create the stats HTML
+                        let statsHTML = `
+                            <div class="metrics-dashboard">
+                                <div class="metric-card">
+                                    <div class="metric-label">Total Training Examples</div>
+                                    <div class="metric-value">${data.total_examples}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div class="metric-label">Training Files</div>
+                                    <div class="metric-value">${data.total_files}</div>
+                                </div>
+                                <div class="metric-card">
+                                    <div class="metric-label">Vector Database</div>
+                                    <div class="metric-value">${data.vectorstore_exists ? 'Ready' : 'Not Built'}</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Add quality metrics if available
+                        if (data.quality_available) {
+                            statsHTML += `
+                                <div class="metric-card" style="width: 100%; margin-top: 15px;">
+                                    <div class="metric-label">Training Data Quality</div>
+                                    <div class="quality-bar">
+                                        <div class="quality-high" style="width: ${data.quality_metrics.high_percent}%;"></div>
+                                        <div class="quality-medium" style="width: ${data.quality_metrics.medium_percent}%;"></div>
+                                        <div class="quality-low" style="width: ${data.quality_metrics.low_percent}%;"></div>
+                                    </div>
+                                    <div class="quality-legend">
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-high"></div>
+                                            <span>High (${data.quality_metrics.high})</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-medium"></div>
+                                            <span>Medium (${data.quality_metrics.medium})</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <div class="legend-color quality-low"></div>
+                                            <span>Low (${data.quality_metrics.low})</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        
+                        // Update the DOM
+                        trainingStats.innerHTML = statsHTML;
+                        
+                        // Show or hide the rebuild vectorstore button based on whether there are training examples
+                        if (data.total_examples > 0) {
+                            rebuildVectorstoreBtn.style.display = 'block';
+                        } else {
+                            rebuildVectorstoreBtn.style.display = 'none';
+                        }
+                    } else {
+                        showTrainingError(data.error || 'Failed to load training status');
+                        trainingStatus.style.display = 'none';
+                    }
+                } catch (error) {
+                    showTrainingError('An error occurred: ' + error.message);
+                    trainingStatus.style.display = 'none';
+                } finally {
+                    trainingLoading.style.display = 'none';
+                }
+            }
+            
+            // Load training examples list from the server
+            async function loadTrainingExamples() {
+                const trainingExamplesList = document.getElementById('training-examples-list');
+                const trainingManagementLoading = document.getElementById('training-management-loading');
+                const trainingManagementError = document.getElementById('training-management-error');
+                
+                try {
+                    trainingManagementLoading.style.display = 'block';
+                    trainingManagementError.style.display = 'none';
+                    
+                    const response = await fetch('/training/list');
+                    const data = await response.json();
+                    
+                    if (response.ok && data.examples) {
+                        if (data.examples.length === 0) {
+                            trainingExamplesList.innerHTML = '<p>No training examples found. Upload integration files or use web crawling to add training data.</p>';
+                            return;
+                        }
+                        
+                        // Create a table to display the examples
+                        let tableHTML = `
+                            <table class="training-examples-table">
+                                <thead>
+                                    <tr>
+                                        <th>Integration Name</th>
+                                        <th>Created</th>
+                                        <th>Preview</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                        `;
+                        
+                        data.examples.forEach(example => {
+                            tableHTML += `
+                                <tr>
+                                    <td>${example.integration_name}</td>
+                                    <td>${example.created}</td>
+                                    <td>${example.preview || 'No preview available'}</td>
+                                    <td>
+                                        <button class="delete-example-btn" onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">Delete</button>
+                                    </td>
+                                </tr>
+                            `;
+                        });
+                        
+                        tableHTML += `
+                                </tbody>
+                            </table>
+                        `;
+                        
+                        trainingExamplesList.innerHTML = tableHTML;
+                        
+                    } else {
+                        trainingManagementError.textContent = data.error || 'Failed to load training examples';
+                        trainingManagementError.style.display = 'block';
+                    }
+                } catch (error) {
+                    trainingManagementError.textContent = 'An error occurred: ' + error.message;
+                    trainingManagementError.style.display = 'block';
+                } finally {
+                    trainingManagementLoading.style.display = 'none';
+                }
+            }
+            
+            // Listen for custom event to refresh training data
+            document.addEventListener('refreshTrainingData', () => {
+                loadTrainingStatus();
+                loadTrainingExamples();
+            });
         });
     </script>
 </body>
