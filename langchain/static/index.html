@@ -429,6 +429,127 @@
             border-radius: 5px;
             border: 1px solid #e9ecef;
         }
+        /* New styles for web-based training */
+        .web-training-container {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .web-training-form {
+            margin-top: 15px;
+        }
+        .web-training-form label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        .web-training-form input[type="text"],
+        .web-training-form input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .web-training-form .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .web-training-form .form-row .form-group {
+            flex: 1;
+        }
+        .web-crawl-results {
+            margin-top: 20px;
+            background-color: #e8f5e9;
+            border-radius: 5px;
+            padding: 15px;
+            display: none;
+        }
+        .pattern-input {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .pattern-input input {
+            flex: 1;
+            margin-right: 8px;
+        }
+        .add-pattern-btn, .remove-pattern-btn {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+        }
+        .remove-pattern-btn {
+            background-color: #e74c3c;
+        }
+        .pattern-container {
+            margin-bottom: 15px;
+        }
+        .url-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 5px;
+        }
+        .url-list-item {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .url-list-item:last-child {
+            border-bottom: none;
+        }
+        .pagination-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+        }
+        .pagination-buttons {
+            display: flex;
+            gap: 5px;
+        }
+        .page-button {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            color: #495057;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .page-button:hover {
+            background-color: #e9ecef;
+        }
+        .page-button.active {
+            background-color: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+        .page-button.disabled {
+            background-color: #f8f9fa;
+            color: #adb5bd;
+            cursor: not-allowed;
+        }
+        .per-page-selector {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .per-page-selector select {
+            padding: 5px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
     </style>
 </head>
 <body>
@@ -565,6 +686,106 @@
                         </div>
                         <div class="error" id="training-management-error" style="display: none;"></div>
                         <button id="rebuild-vectorstore-btn" class="action-button" style="display: none;">Rebuild Vector Database</button>
+                    </div>
+                </div>
+                
+                <!-- Manual Training Examples Section -->
+                <div class="training-option">
+                    <h3>Manual Training Examples</h3>
+                    <p>Add examples of integration JSON and expected documentation manually.</p>
+                    
+                    <div class="training-form">
+                        <div id="training-examples">
+                            <div class="training-example" data-id="1">
+                                <button class="remove-example-btn" data-id="1">Remove</button>
+                                <h4>Example 1</h4>
+                                
+                                <div>
+                                    <label>Integration JSON:</label>
+                                    <div class="drag-area json-drag-area">
+                                        <h3>Drag & Drop JSON File</h3>
+                                        <span>Or</span>
+                                        <button>Browse File</button>
+                                        <input type="file" hidden accept=".json" class="json-file-input">
+                                    </div>
+                                    <div class="json-helper">You can also paste your JSON directly:</div>
+                                    <textarea class="json-input" placeholder='Paste your integration JSON here, e.g., {"source": "CRM", "target": "ERP", ...}'></textarea>
+                                </div>
+                                
+                                <label>Expected Documentation:</label>
+                                <textarea class="documentation-input" placeholder="Enter the expected documentation for this integration..."></textarea>
+                            </div>
+                        </div>
+                        
+                        <button class="add-example-btn">+ Add Another Example</button>
+                        <button id="submit-manual-training" class="submit-training-btn">Submit Training Data</button>
+                    </div>
+                </div>
+                
+                <!-- Web-based Training Section -->
+                <div class="web-training-container">
+                    <h3>Web Documentation as Training Data</h3>
+                    <p>Use product documentation from a website to train the model. The system will crawl the website and extract content for training.</p>
+                    
+                    <div class="web-training-form">
+                        <div class="form-group">
+                            <label for="web-url">Website URL:</label>
+                            <input type="text" id="web-url" placeholder="https://docs.example.com/product/">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="web-title">Training Title:</label>
+                            <input type="text" id="web-title" placeholder="Product Documentation">
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="max-depth">Max Crawl Depth:</label>
+                                <input type="number" id="max-depth" value="2" min="1" max="5">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="max-pages">Max Pages to Crawl:</label>
+                                <input type="number" id="max-pages" value="20" min="5" max="100">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>URL Patterns to Include:</label>
+                            <div id="include-patterns" class="pattern-container">
+                                <div class="pattern-input">
+                                    <input type="text" placeholder="/docs/, /api/, etc.">
+                                    <button class="remove-pattern-btn">-</button>
+                                </div>
+                            </div>
+                            <button class="add-pattern-btn" id="add-include-pattern">+ Add Include Pattern</button>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>URL Patterns to Exclude:</label>
+                            <div id="exclude-patterns" class="pattern-container">
+                                <div class="pattern-input">
+                                    <input type="text" placeholder="/blog/, /forum/, etc.">
+                                    <button class="remove-pattern-btn">-</button>
+                                </div>
+                            </div>
+                            <button class="add-pattern-btn" id="add-exclude-pattern">+ Add Exclude Pattern</button>
+                        </div>
+                        
+                        <button id="start-web-crawl" class="submit-training-btn">Start Web Crawl</button>
+                    </div>
+                    
+                    <div class="loading" id="web-crawl-loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Crawling website... This may take several minutes.</p>
+                    </div>
+                    
+                    <div class="error" id="web-crawl-error" style="display: none;"></div>
+                    
+                    <div class="web-crawl-results" id="web-crawl-results">
+                        <h4>Crawl Results</h4>
+                        <div id="crawl-stats"></div>
+                        <div class="url-list" id="crawled-urls"></div>
                     </div>
                 </div>
             </div>
@@ -1422,7 +1643,11 @@
                 }
             }
             
-            // Load training examples listing for management
+            // Load training examples listing for management with pagination
+            let allTrainingExamples = []; // Store all examples
+            let currentPage = 1;
+            let itemsPerPage = 5; // Default items per page
+            
             async function loadTrainingExamples() {
                 const trainingManagementLoading = document.getElementById('training-management-loading');
                 const trainingManagementError = document.getElementById('training-management-error');
@@ -1439,42 +1664,12 @@
                     
                     if (response.ok && data.examples) {
                         if (data.examples.length > 0) {
-                            // Create a table for the examples
-                            let tableHTML = `
-                                <table class="training-examples-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Integration Name</th>
-                                            <th>Created</th>
-                                            <th>Preview</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                            `;
+                            // Store all examples for pagination
+                            allTrainingExamples = data.examples;
                             
-                            data.examples.forEach(example => {
-                                tableHTML += `
-                                    <tr>
-                                        <td>${example.integration_name}</td>
-                                        <td>${example.created}</td>
-                                        <td>${example.preview}</td>
-                                        <td>
-                                            <button class="delete-example-btn" data-id="${example.id}" 
-                                                    onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">
-                                                Delete
-                                            </button>
-                                        </td>
-                                    </tr>
-                                `;
-                            });
+                            // Render the paginated view
+                            renderPaginatedExamples();
                             
-                            tableHTML += `
-                                    </tbody>
-                                </table>
-                            `;
-                            
-                            trainingExamplesList.innerHTML = tableHTML;
                             rebuildVectorstoreBtn.style.display = 'block';
                         } else {
                             trainingExamplesList.innerHTML = '<p>No training examples found. Add some examples to improve document generation.</p>';
@@ -1492,48 +1687,411 @@
                 }
             }
             
-            // Event listener for rebuild vectorstore button
-            document.getElementById('rebuild-vectorstore-btn').addEventListener('click', async () => {
-                if (!confirm('Are you sure you want to rebuild the vector database? This may take a few moments.')) {
+            // Render examples with pagination
+            function renderPaginatedExamples() {
+                const trainingExamplesList = document.getElementById('training-examples-list');
+                
+                // Calculate pagination values
+                const totalItems = allTrainingExamples.length;
+                const totalPages = Math.ceil(totalItems / itemsPerPage);
+                
+                // Make sure current page is in valid range
+                if (currentPage > totalPages) {
+                    currentPage = totalPages;
+                }
+                if (currentPage < 1) {
+                    currentPage = 1;
+                }
+                
+                // Calculate start and end index for current page
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+                
+                // Get examples for current page
+                const currentExamples = allTrainingExamples.slice(startIndex, endIndex);
+                
+                // Create table HTML
+                let tableHTML = `
+                    <table class="training-examples-table">
+                        <thead>
+                            <tr>
+                                <th>Integration Name</th>
+                                <th>Created</th>
+                                <th>Preview</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                currentExamples.forEach(example => {
+                    tableHTML += `
+                        <tr>
+                            <td>${example.integration_name}</td>
+                            <td>${example.created}</td>
+                            <td>${example.preview}</td>
+                            <td>
+                                <button class="delete-example-btn" data-id="${example.id}" 
+                                        onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                tableHTML += `
+                        </tbody>
+                    </table>
+                `;
+                
+                // Add pagination controls
+                tableHTML += `
+                    <div class="pagination-controls">
+                        <div class="pagination-buttons">
+                            <button class="page-button ${currentPage === 1 ? 'disabled' : ''}" 
+                                    ${currentPage === 1 ? 'disabled' : ''} 
+                                    onclick="changePage(1)">First</button>
+                            <button class="page-button ${currentPage === 1 ? 'disabled' : ''}" 
+                                    ${currentPage === 1 ? 'disabled' : ''} 
+                                    onclick="changePage(${currentPage - 1})">Previous</button>
+                `;
+                
+                // Page numbers (up to 5 page numbers shown)
+                const pageWindow = 2; // Show 2 pages before and after current page
+                const startPage = Math.max(1, currentPage - pageWindow);
+                const endPage = Math.min(totalPages, currentPage + pageWindow);
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    tableHTML += `
+                        <button class="page-button ${i === currentPage ? 'active' : ''}" 
+                                onclick="changePage(${i})">${i}</button>
+                    `;
+                }
+                
+                tableHTML += `
+                            <button class="page-button ${currentPage === totalPages ? 'disabled' : ''}" 
+                                    ${currentPage === totalPages ? 'disabled' : ''} 
+                                    onclick="changePage(${currentPage + 1})">Next</button>
+                            <button class="page-button ${currentPage === totalPages ? 'disabled' : ''}" 
+                                    ${currentPage === totalPages ? 'disabled' : ''} 
+                                    onclick="changePage(${totalPages})">Last</button>
+                        </div>
+                        <div class="per-page-selector">
+                            <label for="items-per-page">Show:</label>
+                            <select id="items-per-page" onchange="changeItemsPerPage(this.value)">
+                                <option value="5" ${itemsPerPage === 5 ? 'selected' : ''}>5</option>
+                                <option value="10" ${itemsPerPage === 10 ? 'selected' : ''}>10</option>
+                                <option value="20" ${itemsPerPage === 20 ? 'selected' : ''}>20</option>
+                                <option value="50" ${itemsPerPage === 50 ? 'selected' : ''}>50</option>
+                            </select>
+                            <span>per page | Showing ${startIndex + 1}-${endIndex} of ${totalItems}</span>
+                        </div>
+                    </div>
+                `;
+                
+                trainingExamplesList.innerHTML = tableHTML;
+            }
+            
+            // Make pagination functions globally available
+            window.changePage = function(page) {
+                currentPage = page;
+                renderPaginatedExamples();
+            };
+            
+            window.changeItemsPerPage = function(items) {
+                itemsPerPage = parseInt(items);
+                currentPage = 1; // Reset to first page when changing items per page
+                renderPaginatedExamples();
+            };
+            
+            // Add event listener for the rebuild vector database button
+            const rebuildVectorstoreBtn = document.getElementById('rebuild-vectorstore-btn');
+            if (rebuildVectorstoreBtn) {
+                rebuildVectorstoreBtn.addEventListener('click', async () => {
+                    if (!confirm('Are you sure you want to rebuild the vector database? This process may take some time.')) {
+                        return;
+                    }
+                    
+                    const trainingManagementLoading = document.getElementById('training-management-loading');
+                    const trainingManagementError = document.getElementById('training-management-error');
+                    
+                    trainingManagementLoading.style.display = 'block';
+                    trainingManagementError.style.display = 'none';
+                    rebuildVectorstoreBtn.disabled = true;
+                    rebuildVectorstoreBtn.textContent = 'Rebuilding...';
+                    
+                    try {
+                        const response = await fetch('/training/rebuild-vectorstore', {
+                            method: 'POST'
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            // Show success message
+                            alert('Vector database rebuilt successfully!');
+                            // Refresh training status to reflect the changes
+                            loadTrainingStatus();
+                        } else {
+                            trainingManagementError.textContent = data.error || 'Failed to rebuild vector database';
+                            trainingManagementError.style.display = 'block';
+                        }
+                    } catch (error) {
+                        trainingManagementError.textContent = 'An error occurred: ' + error.message;
+                        trainingManagementError.style.display = 'block';
+                    } finally {
+                        trainingManagementLoading.style.display = 'none';
+                        rebuildVectorstoreBtn.disabled = false;
+                        rebuildVectorstoreBtn.textContent = 'Rebuild Vector Database';
+                    }
+                });
+            }
+            
+            // Web Crawling for Training functionality
+            const webUrlInput = document.getElementById('web-url');
+            const webTitleInput = document.getElementById('web-title');
+            const maxDepthInput = document.getElementById('max-depth');
+            const maxPagesInput = document.getElementById('max-pages');
+            const includePatternContainer = document.getElementById('include-patterns');
+            const excludePatternContainer = document.getElementById('exclude-patterns');
+            const addIncludePatternBtn = document.getElementById('add-include-pattern');
+            const addExcludePatternBtn = document.getElementById('add-exclude-pattern');
+            const startWebCrawlBtn = document.getElementById('start-web-crawl');
+            const webCrawlLoading = document.getElementById('web-crawl-loading');
+            const webCrawlError = document.getElementById('web-crawl-error');
+            const webCrawlResults = document.getElementById('web-crawl-results');
+            const crawlStats = document.getElementById('crawl-stats');
+            const crawledUrls = document.getElementById('crawled-urls');
+            
+            // Add pattern inputs function
+            function addPatternInput(container) {
+                const patternInput = document.createElement('div');
+                patternInput.className = 'pattern-input';
+                patternInput.innerHTML = `
+                    <input type="text" placeholder="/docs/, /api/, etc.">
+                    <button class="remove-pattern-btn">-</button>
+                `;
+                
+                // Add remove button functionality
+                patternInput.querySelector('.remove-pattern-btn').addEventListener('click', function() {
+                    if (container.children.length > 1) {
+                        patternInput.remove();
+                    } else {
+                        patternInput.querySelector('input').value = '';
+                    }
+                });
+                
+                container.appendChild(patternInput);
+            }
+            
+            // Add event listeners for pattern buttons
+            addIncludePatternBtn.addEventListener('click', () => {
+                addPatternInput(includePatternContainer);
+            });
+            
+            addExcludePatternBtn.addEventListener('click', () => {
+                addPatternInput(excludePatternContainer);
+            });
+            
+            // Add remove button functionality to initial pattern inputs
+            includePatternContainer.querySelectorAll('.remove-pattern-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    if (includePatternContainer.children.length > 1) {
+                        this.parentElement.remove();
+                    } else {
+                        this.parentElement.querySelector('input').value = '';
+                    }
+                });
+            });
+            
+            excludePatternContainer.querySelectorAll('.remove-pattern-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    if (excludePatternContainer.children.length > 1) {
+                        this.parentElement.remove();
+                    } else {
+                        this.parentElement.querySelector('input').value = '';
+                    }
+                });
+            });
+            
+            // Start web crawl functionality
+            startWebCrawlBtn.addEventListener('click', async () => {
+                // Get form values
+                const url = webUrlInput.value.trim();
+                const title = webTitleInput.value.trim() || "Web Documentation";
+                const maxDepth = parseInt(maxDepthInput.value) || 2;
+                const maxPages = parseInt(maxPagesInput.value) || 20;
+                
+                // Get include patterns
+                const includePatterns = [];
+                includePatternContainer.querySelectorAll('input').forEach(input => {
+                    const pattern = input.value.trim();
+                    if (pattern) {
+                        includePatterns.push(pattern);
+                    }
+                });
+                
+                // Get exclude patterns
+                const excludePatterns = [];
+                excludePatternContainer.querySelectorAll('input').forEach(input => {
+                    const pattern = input.value.trim();
+                    if (pattern) {
+                        excludePatterns.push(pattern);
+                    }
+                });
+                
+                // Validation
+                if (!url) {
+                    showWebCrawlError('Please enter a valid URL');
                     return;
                 }
                 
-                const trainingManagementLoading = document.getElementById('training-management-loading');
-                const trainingManagementError = document.getElementById('training-management-error');
+                // Validate URL format
+                try {
+                    new URL(url);
+                } catch (e) {
+                    showWebCrawlError('Please enter a valid URL with http:// or https:// protocol');
+                    return;
+                }
                 
-                trainingManagementLoading.style.display = 'block';
-                trainingManagementError.style.display = 'none';
+                // Show loading and hide error/results
+                webCrawlLoading.style.display = 'block';
+                webCrawlError.style.display = 'none';
+                webCrawlResults.style.display = 'none';
                 
                 try {
-                    const response = await fetch('/training/rebuild-vectorstore', {
-                        method: 'POST'
+                    // Prepare request data
+                    const requestData = {
+                        url: url,
+                        title: title,
+                        max_depth: maxDepth,
+                        max_pages: maxPages,
+                        include_patterns: includePatterns.length > 0 ? includePatterns : null,
+                        exclude_patterns: excludePatterns.length > 0 ? excludePatterns : null
+                    };
+                    
+                    // Call the API
+                    const response = await fetch('/train/web-crawl', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestData)
                     });
                     
                     const data = await response.json();
                     
                     if (response.ok) {
-                        alert('Vector database rebuilt successfully!');
+                        // Show results
+                        displayWebCrawlResults(data);
+                        
+                        // Refresh training status to show the new training data
                         loadTrainingStatus();
+                        loadTrainingExamples();
                     } else {
-                        trainingManagementError.textContent = data.error || 'Failed to rebuild vector database';
-                        trainingManagementError.style.display = 'block';
+                        showWebCrawlError(data.error || 'Failed to crawl website');
                     }
                 } catch (error) {
-                    trainingManagementError.textContent = 'An error occurred: ' + error.message;
-                    trainingManagementError.style.display = 'block';
+                    showWebCrawlError('An error occurred: ' + error.message);
                 } finally {
-                    trainingManagementLoading.style.display = 'none';
+                    webCrawlLoading.style.display = 'none';
                 }
             });
             
-            // Initial call to load training status
-            loadTrainingStatus();
+            // Display web crawl results
+            function displayWebCrawlResults(data) {
+                // Create statistics HTML
+                let statsHTML = `
+                    <h3>Training Data Created: ${data.title}</h3>
+                    <p><strong>Pages Crawled:</strong> ${data.pages_crawled}</p>
+                    <p><strong>Training ID:</strong> ${data.training_id}</p>
+                    <p>The web content has been successfully added to your training data!</p>
+                `;
+                
+                // Create URL list HTML
+                let urlsHTML = '';
+                if (data.urls && data.urls.length > 0) {
+                    data.urls.forEach(url => {
+                        urlsHTML += `<div class="url-list-item">${url}</div>`;
+                    });
+                } else {
+                    urlsHTML = '<div class="url-list-item">No URLs were crawled</div>';
+                }
+                
+                // Update the DOM
+                crawlStats.innerHTML = statsHTML;
+                crawledUrls.innerHTML = urlsHTML;
+                webCrawlResults.style.display = 'block';
+            }
             
-            // Add event listener to refresh training data when examples are deleted
-            document.addEventListener('refreshTrainingData', () => {
-                loadTrainingExamples();
-                loadTrainingStatus();
-            });
+            // Show web crawl error
+            function showWebCrawlError(message) {
+                webCrawlError.textContent = message;
+                webCrawlError.style.display = 'block';
+                webCrawlLoading.style.display = 'none';
+            }
+            
+            // Helper function for JSON file upload in training examples
+            function setupJsonFileUpload(example) {
+                const dragArea = example.querySelector('.json-drag-area');
+                const button = dragArea.querySelector('button');
+                const input = dragArea.querySelector('input');
+                const jsonInput = example.querySelector('.json-input');
+                
+                button.onclick = () => {
+                    input.click();
+                };
+                
+                input.addEventListener('change', function() {
+                    const file = this.files[0];
+                    if (file && file.name.endsWith('.json')) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            try {
+                                // Parse JSON to verify it's valid
+                                const jsonObj = JSON.parse(e.target.result);
+                                // Format it nicely for display
+                                jsonInput.value = JSON.stringify(jsonObj, null, 2);
+                            } catch (error) {
+                                alert("Invalid JSON file: " + error.message);
+                            }
+                        };
+                        reader.readAsText(file);
+                    }
+                });
+                
+                dragArea.addEventListener('dragover', (event) => {
+                    event.preventDefault();
+                    dragArea.classList.add('active');
+                });
+                
+                dragArea.addEventListener('dragleave', () => {
+                    dragArea.classList.remove('active');
+                });
+
+                dragArea.addEventListener('drop', (event) => {
+                    event.preventDefault();
+                    dragArea.classList.remove('active');
+                    const file = event.dataTransfer.files[0];
+                    if (file && file.name.endsWith('.json')) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            try {
+                                // Parse JSON to verify it's valid
+                                const jsonObj = JSON.parse(e.target.result);
+                                // Format it nicely for display
+                                jsonInput.value = JSON.stringify(jsonObj, null, 2);
+                            } catch (error) {
+                                alert("Invalid JSON file: " + error.message);
+                            }
+                        };
+                        reader.readAsText(file);
+                    } else {
+                        alert("Please upload a JSON file");
+                    }
+                });
+            }
         });
     </script>
 </body>

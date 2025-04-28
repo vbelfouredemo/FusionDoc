@@ -1,30 +1,35 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-import json
-import uvicorn
-from langchain_community.document_loaders import JSONLoader
-from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings
-from langchain.chains import RetrievalQA
-from langchain_ollama import OllamaLLM
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 import os
-import tempfile
+import re
+import json
 import time
-import requests
+import uuid
 import logging
+import tempfile
+import zipfile
+import glob
+from enum import Enum
+from typing import List, Optional, Dict, Any
+import requests
+from bs4 import BeautifulSoup
+import html2text
+from urllib.parse import urljoin, urlparse
+
 import markdown
 import pdfkit
-from enum import Enum
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel
-import zipfile
-import re
-import uuid
-import shutil
-import glob
-from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+import uvicorn
+
+from langchain_community.document_loaders import JSONLoader, TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain.chains.retrieval_qa.base import RetrievalQA
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.llms.ollama import Ollama
+from langchain_core.documents import Document
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +82,26 @@ class Integration(BaseModel):
     id: str
     name: str
     file_path: str
+
+class WebScrapingConfig(BaseModel):
+    url: str
+    max_depth: int = Field(default=2, description="Maximum depth of links to follow from the starting URL")
+    max_pages: int = Field(default=20, description="Maximum number of pages to crawl")
+    include_patterns: Optional[List[str]] = Field(default=None, description="URL patterns to include (e.g. '/docs/')")
+    exclude_patterns: Optional[List[str]] = Field(default=None, description="URL patterns to exclude (e.g. '/blog/')")
+    title: str = Field(default="Web Documentation", description="Title for this training material")
+
+class WebCrawlResult(BaseModel):
+    title: str
+    url: str
+    text_content: str
+    crawled_at: str
+    
+class WebCrawlBatchResult(BaseModel):
+    title: str
+    pages_crawled: int
+    urls: List[str]
+    training_id: str
 
 app = FastAPI()
 
@@ -372,7 +397,7 @@ async def analyze_file(filename: str = Form(...)):
         for attempt in range(max_retries):
             try:
                 logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
-                llm = OllamaLLM(
+                llm = Ollama(
                     base_url="http://ollama:11434", 
                     model="mistral"
                 )
@@ -501,7 +526,7 @@ async def analyze_file_with_format(
                     time.sleep(retry_delay)
             
             # Initialize LLM
-            llm = OllamaLLM(
+            llm = Ollama(
                 base_url="http://ollama:11434", 
                 model="mistral"
             )
@@ -817,7 +842,7 @@ async def analyze_file_with_format(
             for attempt in range(max_retries):
                 try:
                     logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
-                    llm = OllamaLLM(
+                    llm = Ollama(
                         base_url="http://ollama:11434", 
                         model="mistral"
                     )
@@ -1074,7 +1099,7 @@ async def analyze_file_with_training(
                     time.sleep(retry_delay)
             
             # Initialize LLM
-            llm = OllamaLLM(
+            llm = Ollama(
                 base_url="http://ollama:11434", 
                 model="mistral"
             )
@@ -1390,7 +1415,7 @@ async def analyze_file_with_training(
             for attempt in range(max_retries):
                 try:
                     logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
-                    llm = OllamaLLM(
+                    llm = Ollama(
                         base_url="http://ollama:11434", 
                         model="mistral"
                     )
@@ -1936,7 +1961,7 @@ async def train_with_zip(
         integration_name = selected_integration["name"]
         
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path,            'r') as f:
                 integration_json = json.load(f)
                 
             # Analyze the integration flow to get comprehensive information
@@ -2024,5 +2049,129 @@ async def train_with_zip(
             content={"error": f"Error processing training data: {str(e)}"}
         )
 
+def flatten_json(json_data, prefix=""):
+    """
+    Flatten a nested JSON object into a flat structure.
+    This helps for better processing by language models.
+    """
+    flattened = {}
+    
+    if isinstance(json_data, dict):
+        for key, value in json_data.items():
+            new_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, (dict, list)):
+                flattened.update(flatten_json(value, new_key))
+            else:
+                flattened[new_key] = value
+    elif isinstance(json_data, list):
+        for i, item in enumerate(json_data):
+            new_key = f"{prefix}[{i}]" if prefix else f"[{i}]"
+            if isinstance(item, (dict, list)):
+                flattened.update(flatten_json(item, new_key))
+            else:
+                flattened[new_key] = item
+    else:
+        flattened[prefix] = json_data
+        
+    return flattened
+
+def analyze_integration_flow(integration_id, extract_dir):
+    """
+    Analyze the integration flow structure by examining components, mappings,
+    and their relationships within the extracted project files.
+    """
+    logger.info(f"Analyzing integration flow: {integration_id} in {extract_dir}")
+    
+    # Find the integration service file
+    service_files = glob.glob(f"{extract_dir}/**/services/*_{integration_id}.json", recursive=True)
+    
+    if not service_files:
+        logger.warning(f"Integration service file not found for ID: {integration_id}")
+        return None
+    
+    # Get the first matching service file
+    service_file = service_files[0]
+    
+    try:
+        # Load the service definition
+        with open(service_file, 'r') as f:
+            service_data = json.load(f)
+        
+        # Initialize flow analysis structure
+        flow_analysis = {
+            "integration_id": integration_id,
+            "name": os.path.basename(service_file).split('_')[0],
+            "components": [],
+            "connections": []
+        }
+        
+        # Extract component IDs from the service file
+        component_ids = []
+        if "components" in service_data:
+            component_ids = [comp.get("id") for comp in service_data["components"] if "id" in comp]
+        
+        # Find component config files
+        for component_id in component_ids:
+            config_files = glob.glob(f"{extract_dir}/**/component_configs/{component_id}.json", recursive=True)
+            
+            if config_files:
+                config_file = config_files[0]
+                try:
+                    with open(config_file, 'r') as f:
+                        config_data = json.load(f)
+                    
+                    # Extract component information
+                    component_info = {
+                        "id": component_id,
+                        "name": config_data.get("name", "Unknown"),
+                        "type": config_data.get("componentType", "Unknown"),
+                        "description": config_data.get("description", ""),
+                        "order": None,
+                        "parent_id": None
+                    }
+                    
+                    # Extract component position/order if available
+                    if "uiAttributes" in config_data and "coordinates" in config_data["uiAttributes"]:
+                        coordinates = config_data["uiAttributes"]["coordinates"]
+                        if "x" in coordinates:
+                            component_info["order"] = coordinates.get("x", 0)
+                    
+                    # Check for parent-child relationships
+                    if "parentComponentId" in config_data:
+                        component_info["parent_id"] = config_data["parentComponentId"]
+                    
+                    # Add to components list
+                    flow_analysis["components"].append(component_info)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing component config {config_file}: {str(e)}")
+            else:
+                # Add placeholder for component without config
+                flow_analysis["components"].append({
+                    "id": component_id,
+                    "name": f"Component {component_id}",
+                    "type": "Unknown",
+                    "description": "",
+                    "order": None,
+                    "parent_id": None
+                })
+        
+        # Extract connections between components
+        if "connections" in service_data:
+            for connection in service_data["connections"]:
+                if "fromId" in connection and "toId" in connection:
+                    flow_analysis["connections"].append({
+                        "from": connection["fromId"],
+                        "to": connection["toId"],
+                        "type": connection.get("type", "default")
+                    })
+        
+        return flow_analysis
+    
+    except Exception as e:
+        logger.error(f"Error analyzing integration flow: {str(e)}")
+        return None
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
+
