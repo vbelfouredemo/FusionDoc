@@ -1,23 +1,27 @@
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install minimal dependencies for web scraping
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
-    ca-certificates \
-    && apt-get clean
+    wkhtmltopdf \
+    pkg-config \
+    gcc \
+    libjpeg-dev \
+    zlib1g-dev \
+    git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt requirements.txt
+# Install Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright with Chromium
-RUN pip install playwright==1.41.1 && \
-    playwright install chromium && \
-    playwright install-deps chromium
-
+# Copy application code
 COPY . .
 
+# Start the application
 CMD ["python", "app.py"]

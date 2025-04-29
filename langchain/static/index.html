@@ -574,6 +574,23 @@
         .sub-tab-content.active {
             display: block;
         }
+
+        /* Image Analysis styles */
+        .image-preview {
+            max-width: 100%;
+            max-height: 300px;
+            margin-top: 15px;
+            border: 1px solid #e1e4e8;
+            border-radius: 5px;
+            display: none;
+        }
+        .image-format-selection {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
     </style>
 </head>
 <body>
@@ -584,6 +601,7 @@
         <div class="tabs">
             <div class="tab active" data-tab="generate">Generate Documentation</div>
             <div class="tab" data-tab="train">Train the Model</div>
+            <div class="tab" data-tab="image">Image Analysis</div>
         </div>
         
         <!-- Generate Documentation Tab -->
@@ -794,6 +812,53 @@
                 </div>
             </div>
         </div>
+        
+        <!-- Image Analysis Tab -->
+        <div class="tab-content" id="image-tab">
+            <div class="card">
+                <h2>Image Analysis</h2>
+                <p>Upload an image to generate documentation or analysis about its content.</p>
+                
+                <div class="drag-area" id="image-drag-area">
+                    <h3>Drag & Drop Image</h3>
+                    <span>Or</span>
+                    <button>Browse Image</button>
+                    <input type="file" hidden accept="image/*" id="image-input">
+                </div>
+                
+                <div id="image-display"></div>
+                <img id="image-preview" class="image-preview">
+                
+                <div class="image-format-selection">
+                    <h4>Select Output Format</h4>
+                    <div class="format-options">
+                        <label class="format-option">
+                            <input type="radio" name="image-output-format" value="markdown" checked>
+                            Markdown
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="image-output-format" value="html">
+                            HTML
+                        </label>
+                        <label class="format-option">
+                            <input type="radio" name="image-output-format" value="pdf">
+                            PDF
+                        </label>
+                    </div>
+                </div>
+                
+                <button id="analyze-image" class="analyze-btn">Analyze Image</button>
+                
+                <div class="loading" id="image-loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing image...</p>
+                </div>
+                
+                <div class="error" id="image-error-message"></div>
+            </div>
+            
+            <div id="image-result"></div>
+        </div>
     </div>
 
     <script>
@@ -855,7 +920,7 @@
                     // If training tab is clicked, load training status
                     if (tabId === 'train') {
                         loadTrainingStatus();
-                        loadTrainingExamples(); // Load the training examples list
+                        loadTrainingExamples();
                     }
                 });
             });
@@ -1741,6 +1806,189 @@
                 loadTrainingStatus();
                 loadTrainingExamples();
             });
+            
+            // Image Analysis functionality
+            const imageDragArea = document.getElementById('image-drag-area');
+            const imageButton = imageDragArea.querySelector('button');
+            const imageInput = document.getElementById('image-input');
+            const imageDisplay = document.getElementById('image-display');
+            const imagePreview = document.getElementById('image-preview');
+            const analyzeImageBtn = document.getElementById('analyze-image');
+            const imageResult = document.getElementById('image-result');
+            const imageLoading = document.getElementById('image-loading');
+            const imageErrorMessage = document.getElementById('image-error-message');
+            const imageFormatOptions = document.getElementsByName('image-output-format');
+            
+            let imageFile;
+            let uploadedImagePath;
+            
+            imageButton.onclick = () => {
+                imageInput.click();
+            };
+            
+            imageInput.addEventListener('change', function() {
+                imageFile = this.files[0];
+                displayImageFile();
+            });
+            
+            imageDragArea.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                imageDragArea.classList.add('active');
+            });
+            
+            imageDragArea.addEventListener('dragleave', () => {
+                imageDragArea.classList.remove('active');
+            });
+            
+            imageDragArea.addEventListener('drop', (event) => {
+                event.preventDefault();
+                imageDragArea.classList.remove('active');
+                imageFile = event.dataTransfer.files[0];
+                displayImageFile();
+            });
+            
+            function displayImageFile() {
+                if (imageFile && imageFile.type.startsWith('image/')) {
+                    imageErrorMessage.style.display = 'none';
+                    const reader = new FileReader();
+                    
+                    reader.onload = () => {
+                        const fileSize = (imageFile.size / 1024).toFixed(2) + " KB";
+                        imageDisplay.innerHTML = `
+                            <div class="file-container">
+                                <div class="file-info">
+                                    <div class="file-name">${imageFile.name}</div>
+                                    <div class="file-size">${fileSize}</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Show image preview
+                        imagePreview.src = reader.result;
+                        imagePreview.style.display = 'block';
+                        
+                        // Show analyze button
+                        analyzeImageBtn.classList.add('visible');
+                        
+                        // Upload the image
+                        uploadImage();
+                    };
+                    
+                    reader.readAsDataURL(imageFile);
+                } else {
+                    showImageError('Please select a valid image file');
+                    resetImageFile();
+                }
+            }
+            
+            function resetImageFile() {
+                imageFile = null;
+                imageDisplay.innerHTML = '';
+                imagePreview.style.display = 'none';
+                analyzeImageBtn.classList.remove('visible');
+                imageResult.innerHTML = '';
+            }
+            
+            function showImageError(message) {
+                imageErrorMessage.textContent = message;
+                imageErrorMessage.style.display = 'block';
+                imageLoading.style.display = 'none';
+            }
+            
+            async function uploadImage() {
+                if (!imageFile) return;
+                
+                imageLoading.style.display = 'block';
+                imageErrorMessage.style.display = 'none';
+                
+                const formData = new FormData();
+                formData.append('file', imageFile);
+                
+                try {
+                    const uploadResponse = await fetch('/upload-image', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const uploadData = await uploadResponse.json();
+                    
+                    if (uploadResponse.ok && uploadData.file_path) {
+                        uploadedImagePath = uploadData.file_path;
+                        analyzeImageBtn.disabled = false;
+                    } else {
+                        showImageError(uploadData.error || 'Failed to upload image');
+                    }
+                } catch (error) {
+                    showImageError('An error occurred: ' + error.message);
+                } finally {
+                    imageLoading.style.display = 'none';
+                }
+            }
+            
+            function getSelectedImageFormat() {
+                for (const option of imageFormatOptions) {
+                    if (option.checked) {
+                        return option.value;
+                    }
+                }
+                return 'markdown'; // Default to markdown
+            }
+            
+            async function analyzeImage() {
+                if (!uploadedImagePath) {
+                    showImageError('Please upload an image first');
+                    return;
+                }
+                
+                imageResult.innerHTML = '';
+                imageLoading.style.display = 'block';
+                imageErrorMessage.style.display = 'none';
+                
+                try {
+                    const selectedFormat = getSelectedImageFormat();
+                    
+                    const response = await fetch('/analyze-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            image_path: uploadedImagePath,
+                            format: selectedFormat
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok && data.documentation) {
+                        let resultHTML = `
+                            <div class="card">
+                                <h2>Image Analysis</h2>
+                                <div class="documentation">${data.documentation}</div>
+                        `;
+                        
+                        // Add download button for markdown or PDF format
+                        if (data.download_url) {
+                            resultHTML += `
+                                <a href="${data.download_url}" class="download-btn">
+                                    Download ${selectedFormat.toUpperCase()}
+                                </a>
+                            `;
+                        }
+                        
+                        resultHTML += `</div>`;
+                        imageResult.innerHTML = resultHTML;
+                    } else {
+                        showImageError(data.error || 'Failed to analyze image');
+                    }
+                } catch (error) {
+                    showImageError('An error occurred: ' + error.message);
+                } finally {
+                    imageLoading.style.display = 'none';
+                }
+            }
+            
+            analyzeImageBtn.addEventListener('click', analyzeImage);
         });
     </script>
 </body>

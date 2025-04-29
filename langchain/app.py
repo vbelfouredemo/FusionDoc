@@ -1,26 +1,27 @@
-import os
-import re
-import json
-import time
-import uuid
-import logging
-import tempfile
-import zipfile
-import glob
-import asyncio
-from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import requests
 from bs4 import BeautifulSoup
 import html2text
 from urllib.parse import urljoin, urlparse
 import traceback
+import base64
+from io import BytesIO
+from PIL import Image
+import uuid
+import time
+import os
+import re
+import json
+import zipfile
+import glob
+import logging
+import markdown
+import pdfkit
+import tempfile
 
 # Update Playwright imports to use async version
 from playwright.async_api import async_playwright
 
-import markdown
-import pdfkit
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,40 +36,12 @@ from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms.ollama import Ollama
 from langchain_core.documents import Document
+from enum import Enum
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("FusionDoc")
-
-def ensure_mistral_model():
-    """Check if Mistral model is installed, and install it if not."""
-    logger.info("Checking if Mistral model is available...")
-    try:
-        response = requests.post(
-            "http://ollama:11434/api/generate",
-            json={"model": "mistral", "prompt": "test", "stream": False},
-            timeout=15  # Increased timeout from 5 to 15 seconds
-        )
-        if response.status_code == 200:
-            logger.info("Mistral model is already installed")
-            return True
-        
-        if response.status_code == 404:
-            logger.info("Mistral model not found. Installing now...")
-            pull_response = requests.post(
-                "http://ollama:11434/api/pull",
-                json={"name": "mistral"},
-                timeout=600  # Longer timeout for model download
-            )
-            if pull_response.status_code == 200:
-                logger.info("Successfully installed Mistral model")
-                return True
-            else:
-                logger.error(f"Failed to install Mistral model: {pull_response.status_code}, {pull_response.text}")
-                return False
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error checking/installing Mistral model: {str(e)}")
-        return False
 
 class OutputFormat(str, Enum):
     html = "html"
@@ -108,7 +81,50 @@ class WebCrawlBatchResult(BaseModel):
     urls: List[str]
     training_id: str
 
-app = FastAPI()
+class ImageAnalysisRequest(BaseModel):
+    image_path: str = Field(..., description="Path to the image file to analyze")
+    format: Optional[OutputFormat] = Field(OutputFormat.markdown, description="Output format for the documentation")
+
+class ImageUploadResponse(BaseModel):
+    filename: str
+    file_path: str
+    message: str
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for FastAPI application startup and shutdown events."""
+    # Startup code - runs before the application starts accepting requests
+    # Retry a few times to accommodate Ollama startup time
+    max_retries = 5
+    for attempt in range(max_retries):
+        logger.info(f"Startup check {attempt+1}/{max_retries}: Verifying Ollama and Mistral availability")
+        try:
+            # Check if Ollama is up
+            response = requests.get("http://ollama:11434", timeout=5)
+            if response.status_code < 400:
+                # Ollama is up, now ensure Mistral is installed
+                if ensure_mistral_model():
+                    logger.info("Startup completed: Ollama is running and Mistral model is available")
+                    break
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ollama service not ready yet: {str(e)}")
+        
+        # If we reach here, either Ollama isn't up or Mistral installation failed
+        if attempt < max_retries - 1:
+            delay = 10  # Wait 10 seconds between attempts
+            logger.info(f"Retrying in {delay} seconds...")
+            time.sleep(delay)
+        else:
+            logger.error("Failed to ensure Mistral model availability after maximum retries")
+    
+    # Yield control back to FastAPI
+    yield
+    
+    # Shutdown code - runs after the application finishes serving requests
+    logger.info("Application shutting down")
+
+# Define the app with lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
@@ -123,6 +139,48 @@ app.add_middleware(
 os.makedirs("/data", exist_ok=True)
 os.makedirs("/data/uploads", exist_ok=True)
 os.makedirs("/data/extracted", exist_ok=True)
+
+def ensure_mistral_model():
+    """
+    Check if Mistral model is installed in Ollama, and attempt to install it if not present.
+    Returns True if the model is available or was successfully installed, False otherwise.
+    """
+    logger.info("Checking if Mistral model is available in Ollama...")
+    
+    try:
+        # Check available models
+        response = requests.get("http://ollama:11434/api/tags", timeout=10)
+        
+        if response.status_code == 200:
+            models = response.json().get("models", [])
+            
+            # Check if Mistral is already installed
+            if any(m.get("name") == "mistral" for m in models):
+                logger.info("Mistral model is already installed")
+                return True
+            
+            # If not installed, try to pull it
+            logger.info("Mistral model not found. Attempting to pull it...")
+            
+            pull_response = requests.post(
+                "http://ollama:11434/api/pull",
+                json={"name": "mistral"},
+                timeout=600  # Longer timeout for model download
+            )
+            
+            if pull_response.status_code == 200:
+                logger.info("Successfully pulled Mistral model")
+                return True
+            else:
+                logger.error(f"Failed to pull Mistral model: {pull_response.status_code}, {pull_response.text}")
+                return False
+        else:
+            logger.error(f"Failed to check available models: {response.status_code}, {response.text}")
+            return False
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error connecting to Ollama service: {str(e)}")
+        return False
 
 # Try to ensure Mistral model is installed at startup
 @app.on_event("startup")
@@ -357,7 +415,7 @@ async def analyze_file(filename: str = Form(...)):
         
         # Setup embeddings with retry logic
         max_retries = 3
-        retry_delay = 2
+        retry_delay = 5
         
         for attempt in range(max_retries):
             try:
@@ -436,6 +494,7 @@ async def analyze_file(filename: str = Form(...)):
             content={"error": f"Error analyzing file: {str(e)}"}
         )
 
+# Fix duplicate code in analyze-with-format function
 @app.post("/analyze-with-format")
 async def analyze_file_with_format(
     filename: str = Form(...), 
@@ -505,7 +564,7 @@ async def analyze_file_with_format(
             
             # Initialize embeddings with retry logic
             max_retries = 3
-            retry_delay = 2
+            retry_delay = 5
             
             for attempt in range(max_retries):
                 try:
@@ -573,15 +632,29 @@ async def analyze_file_with_format(
                         )
                         documents = loader.load()
                         logger.info(f"Successfully loaded {len(documents)} documents from {integration_name}")
-                    
-                    # Create a vector store for retrieval
+                except Exception as e:
+                    logger.error(f"Error processing integration {integration_name}: {str(e)}")
+                    continue
+                
+                # Create a vector store for retrieval
+                try:
+                    logger.info("Creating vector store with ChromaDB...")
                     vectorstore = Chroma.from_documents(
                         documents=documents,
                         embedding=embeddings,
                         persist_directory=f"/data/temp_vectorstore_{integration_name}_{int(time.time())}",
                     )
-                    
-                    # Create a retrieval chain for this integration
+                    logger.info("Vector store created successfully")
+                except Exception as e:
+                    logger.error(f"Error creating vector store: {str(e)}")
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": f"Error creating vector store: {str(e)}. Please check ChromaDB connection."}
+                    )
+                
+                # Create a retrieval chain for this integration
+                try:
+                    logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
                     qa_chain = RetrievalQA.from_chain_type(
                         llm=llm,
                         chain_type="stuff",
@@ -635,15 +708,15 @@ async def analyze_file_with_format(
                         "documentation": result,
                         "flow_structure": flow_structure
                     })
-                    
                 except Exception as e:
-                    logger.error(f"Error processing integration {integration_name}: {str(e)}")
-                    # Add error message to documentation
-                    all_docs.append({
-                        "name": integration_name,
-                        "documentation": f"Error generating documentation: {str(e)}",
-                        "error": True
-                    })
+                    logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
+                    if attempt == max_retries - 1:
+                        return JSONResponse(
+                            status_code=503,
+                            content={"error": f"Failed to generate documentation after {max_retries} attempts: {str(e)}"}
+                        )
+                    logger.warning(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
             
             # Combine all documentation into a single document
             combined_doc = ""
@@ -728,213 +801,6 @@ async def analyze_file_with_format(
                         "format": "html",
                         "error": f"Failed to generate PDF: {str(e)}"
                     }
-            
-        else:
-            # This is a regular single JSON file analysis
-            # Load the JSON file
-            file_path = f"/data/{filename}"
-            logger.info(f"Loading file from path: {file_path}")
-            
-            # Check if Ollama service is available
-            try:
-                logger.info("Checking if Ollama service is available...")
-                # Ollama doesn't have a /api/health endpoint, use the root endpoint instead
-                response = requests.get("http://ollama:11434", timeout=5)
-                logger.info(f"Ollama connection check response: {response.status_code}")
-                if response.status_code >= 400:
-                    logger.error(f"Ollama service returned status code: {response.status_code}")
-                    return JSONResponse(
-                        status_code=503,
-                        content={"error": "Ollama service is not responding correctly. Please check if the service is running properly."}
-                    )
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Cannot connect to Ollama service: {str(e)}")
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": f"Cannot connect to Ollama service: {str(e)}. Please ensure the Ollama container is running and that the Mistral model is installed."}
-                )
-            
-            # Check if Mistral model is available
-            try:
-                logger.info("Checking if Mistral model is available...")
-                response = requests.post(
-                    "http://ollama:11434/api/generate",
-                    json={"model": "mistral", "prompt": "test", "stream": False},
-                    timeout=15
-                )
-                logger.info(f"Mistral model check response: {response.status_code}")
-                if response.status_code == 404:
-                    logger.error("Mistral model not found")
-                    return JSONResponse(
-                        status_code=503,
-                        content={"error": "The Mistral model is not installed in Ollama. Please install it with 'docker exec -it ollama ollama pull mistral'"}
-                    )
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Could not check Mistral model: {str(e)}")
-                # If we can't check model, we'll try to use it anyway
-            
-            # Initialize document loader for JSON
-            try:
-                logger.info("Loading and flattening JSON document...")
-                with tempfile.NamedTemporaryFile(mode='w+', suffix='.json') as tmp:
-                    with open(file_path, 'r') as f:
-                        json_data = json.load(f)
-                    
-                    # Convert the JSON to a more flat structure if needed
-                    flat_json = flatten_json(json_data)
-                    json.dump(flat_json, tmp)
-                    tmp.flush()
-                    
-                    # Load the flattened JSON
-                    loader = JSONLoader(
-                        file_path=tmp.name,
-                        jq_schema='.',
-                        text_content=False
-                    )
-                    documents = loader.load()
-                    logger.info(f"Successfully loaded {len(documents)} documents")
-            except Exception as e:
-                logger.error(f"Error loading JSON: {str(e)}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": f"Error loading JSON: {str(e)}"}
-                )
-            
-            # Setup embeddings with retry logic
-            max_retries = 3
-            retry_delay = 2
-            
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"Embedding attempt {attempt + 1}: Initializing OllamaEmbeddings...")
-                    embeddings = OllamaEmbeddings(
-                        base_url="http://ollama:11434",
-                        model="mistral"
-                    )
-                    
-                    # Test embeddings with a simple input
-                    logger.info("Testing embeddings with a simple query...")
-                    embeddings.embed_query("test")
-                    logger.info("Embedding test successful")
-                    break
-                except Exception as e:
-                    logger.error(f"Embedding attempt {attempt + 1} failed: {str(e)}")
-                    if attempt == max_retries - 1:
-                        return JSONResponse(
-                            status_code=503,
-                            content={"error": f"Failed to initialize embeddings after {max_retries} attempts: {str(e)}. Please ensure the Ollama service is running and the Mistral model is installed."}
-                        )
-                    logger.warning(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-            
-            # Create vector store
-            try:
-                logger.info("Creating vector store with ChromaDB...")
-                vectorstore = Chroma.from_documents(
-                    documents=documents,
-                    embedding=embeddings,
-                    persist_directory="/data/chromium"
-                )
-                logger.info("Vector store created successfully")
-            except Exception as e:
-                logger.error(f"Error creating vector store: {str(e)}")
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": f"Error creating vector store: {str(e)}. Please check ChromaDB connection."}
-                )
-            
-            # Setup retrieval chain with retry logic
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
-                    llm = Ollama(
-                        base_url="http://ollama:11434", 
-                        model="mistral"
-                    )
-                    qa_chain = RetrievalQA.from_chain_type(
-                        llm=llm,
-                        chain_type="stuff",
-                        retriever=vectorstore.as_retriever()
-                    )
-                    
-                    # Generate documentation
-                    logger.info("Generating documentation...")
-                    query = "Document this integration. Explain what it does in simple terms, including the source systems, transformations, and target systems."
-                    result = qa_chain.invoke(query)["result"]
-                    logger.info("Documentation generated successfully")
-                    
-                    # Format and return the result based on requested output format
-                    if output_format == OutputFormat.html:
-                        return {"documentation": result, "format": "html"}
-                    
-                    # Create file name based on input file
-                    base_filename = filename.rsplit('.', 1)[0]
-                    
-                    if output_format == OutputFormat.markdown:
-                        # Save the markdown content
-                        md_filename = f"{base_filename}.md"
-                        md_filepath = f"/data/{md_filename}"
-                        with open(md_filepath, "w") as f:
-                            f.write(f"# Integration Documentation: {base_filename}\n\n{result}")
-                        
-                        return {
-                            "documentation": result,
-                            "format": "markdown",
-                            "filename": md_filename,
-                            "download_url": f"/download/{md_filename}"
-                        }
-                    
-                    elif output_format == OutputFormat.pdf:
-                        # Convert to PDF
-                        pdf_filename = f"{base_filename}.pdf"
-                        pdf_filepath = f"/data/{pdf_filename}"
-                        
-                        # Create HTML content for PDF
-                        html_content = f"""
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <title>Integration Documentation: {base_filename}</title>
-                            <style>
-                                body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }}
-                                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
-                                .content {{ margin-top: 20px; white-space: pre-wrap; }}
-                            </style>
-                        </head>
-                        <body>
-                            <h1>Integration Documentation: {base_filename}</h1>
-                            <div class="content">{result}</div>
-                        </body>
-                        </html>
-                        """
-                        
-                        try:
-                            # Generate PDF file
-                            pdfkit.from_string(html_content, pdf_filepath)
-                            
-                            return {
-                                "documentation": result,
-                                "format": "pdf",
-                                "filename": pdf_filename,
-                                "download_url": f"/download/{pdf_filename}"
-                            }
-                        except Exception as e:
-                            logger.error(f"Error generating PDF: {str(e)}")
-                            # Fall back to HTML if PDF generation fails
-                            return {
-                                "documentation": result,
-                                "format": "html",
-                                "error": f"Failed to generate PDF: {str(e)}"
-                            }
-                except Exception as e:
-                    logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
-                    if attempt == max_retries - 1:
-                        return JSONResponse(
-                            status_code=503,
-                            content={"error": f"Failed to generate documentation after {max_retries} attempts: {str(e)}"}
-                        )
-                    logger.warning(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
     
     except Exception as e:
         logger.error(f"Error in analyze-with-format: {str(e)}")
@@ -1078,7 +944,7 @@ async def analyze_file_with_training(
             
             # Initialize embeddings with retry logic
             max_retries = 3
-            retry_delay = 2
+            retry_delay = 5
             
             for attempt in range(max_retries):
                 try:
@@ -1146,15 +1012,29 @@ async def analyze_file_with_training(
                         )
                         documents = loader.load()
                         logger.info(f"Successfully loaded {len(documents)} documents from {integration_name}")
-                    
-                    # Create a vector store for retrieval
+                except Exception as e:
+                    logger.error(f"Error processing integration {integration_name}: {str(e)}")
+                    continue
+                
+                # Create a vector store for retrieval
+                try:
+                    logger.info("Creating vector store with ChromaDB...")
                     vectorstore = Chroma.from_documents(
                         documents=documents,
                         embedding=embeddings,
                         persist_directory=f"/data/temp_vectorstore_{integration_name}_{int(time.time())}",
                     )
-                    
-                    # Create a retrieval chain for this integration
+                    logger.info("Vector store created successfully")
+                except Exception as e:
+                    logger.error(f"Error creating vector store: {str(e)}")
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": f"Error creating vector store: {str(e)}. Please check ChromaDB connection."}
+                    )
+                
+                # Create a retrieval chain for this integration
+                try:
+                    logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
                     qa_chain = RetrievalQA.from_chain_type(
                         llm=llm,
                         chain_type="stuff",
@@ -1208,15 +1088,15 @@ async def analyze_file_with_training(
                         "documentation": result,
                         "flow_structure": flow_structure
                     })
-                    
                 except Exception as e:
-                    logger.error(f"Error processing integration {integration_name}: {str(e)}")
-                    # Add error message to documentation
-                    all_docs.append({
-                        "name": integration_name,
-                        "documentation": f"Error generating documentation: {str(e)}",
-                        "error": True
-                    })
+                    logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
+                    if attempt == max_retries - 1:
+                        return JSONResponse(
+                            status_code=503,
+                            content={"error": f"Failed to generate documentation after {max_retries} attempts: {str(e)}"}
+                        )
+                    logger.warning(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
             
             # Combine all documentation into a single document
             combined_doc = ""
@@ -1301,213 +1181,6 @@ async def analyze_file_with_training(
                         "format": "html",
                         "error": f"Failed to generate PDF: {str(e)}"
                     }
-            
-        else:
-            # This is a regular single JSON file analysis
-            # Load the JSON file
-            file_path = f"/data/{filename}"
-            logger.info(f"Loading file from path: {file_path}")
-            
-            # Check if Ollama service is available
-            try:
-                logger.info("Checking if Ollama service is available...")
-                # Ollama doesn't have a /api/health endpoint, use the root endpoint instead
-                response = requests.get("http://ollama:11434", timeout=5)
-                logger.info(f"Ollama connection check response: {response.status_code}")
-                if response.status_code >= 400:
-                    logger.error(f"Ollama service returned status code: {response.status_code}")
-                    return JSONResponse(
-                        status_code=503,
-                        content={"error": "Ollama service is not responding correctly. Please check if the service is running properly."}
-                    )
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Cannot connect to Ollama service: {str(e)}")
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": f"Cannot connect to Ollama service: {str(e)}. Please ensure the Ollama container is running and that the Mistral model is installed."}
-                )
-            
-            # Check if Mistral model is available
-            try:
-                logger.info("Checking if Mistral model is available...")
-                response = requests.post(
-                    "http://ollama:11434/api/generate",
-                    json={"model": "mistral", "prompt": "test", "stream": False},
-                    timeout=15
-                )
-                logger.info(f"Mistral model check response: {response.status_code}")
-                if response.status_code == 404:
-                    logger.error("Mistral model not found")
-                    return JSONResponse(
-                        status_code=503,
-                        content={"error": "The Mistral model is not installed in Ollama. Please install it with 'docker exec -it ollama ollama pull mistral'"}
-                    )
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Could not check Mistral model: {str(e)}")
-                # If we can't check model, we'll try to use it anyway
-            
-            # Initialize document loader for JSON
-            try:
-                logger.info("Loading and flattening JSON document...")
-                with tempfile.NamedTemporaryFile(mode='w+', suffix='.json') as tmp:
-                    with open(file_path, 'r') as f:
-                        json_data = json.load(f)
-                    
-                    # Convert the JSON to a more flat structure if needed
-                    flat_json = flatten_json(json_data)
-                    json.dump(flat_json, tmp)
-                    tmp.flush()
-                    
-                    # Load the flattened JSON
-                    loader = JSONLoader(
-                        file_path=tmp.name,
-                        jq_schema='.',
-                        text_content=False
-                    )
-                    documents = loader.load()
-                    logger.info(f"Successfully loaded {len(documents)} documents")
-            except Exception as e:
-                logger.error(f"Error loading JSON: {str(e)}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": f"Error loading JSON: {str(e)}"}
-                )
-            
-            # Setup embeddings with retry logic
-            max_retries = 3
-            retry_delay = 2
-            
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"Embedding attempt {attempt + 1}: Initializing OllamaEmbeddings...")
-                    embeddings = OllamaEmbeddings(
-                        base_url="http://ollama:11434",
-                        model="mistral"
-                    )
-                    
-                    # Test embeddings with a simple input
-                    logger.info("Testing embeddings with a simple query...")
-                    embeddings.embed_query("test")
-                    logger.info("Embedding test successful")
-                    break
-                except Exception as e:
-                    logger.error(f"Embedding attempt {attempt + 1} failed: {str(e)}")
-                    if attempt == max_retries - 1:
-                        return JSONResponse(
-                            status_code=503,
-                            content={"error": f"Failed to initialize embeddings after {max_retries} attempts: {str(e)}. Please ensure the Ollama service is running and the Mistral model is installed."}
-                        )
-                    logger.warning(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-            
-            # Create vector store
-            try:
-                logger.info("Creating vector store with ChromaDB...")
-                vectorstore = Chroma.from_documents(
-                    documents=documents,
-                    embedding=embeddings,
-                    persist_directory="/data/chromium"
-                )
-                logger.info("Vector store created successfully")
-            except Exception as e:
-                logger.error(f"Error creating vector store: {str(e)}")
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": f"Error creating vector store: {str(e)}. Please check ChromaDB connection."}
-                )
-            
-            # Setup retrieval chain with retry logic
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
-                    llm = Ollama(
-                        base_url="http://ollama:11434", 
-                        model="mistral"
-                    )
-                    qa_chain = RetrievalQA.from_chain_type(
-                        llm=llm,
-                        chain_type="stuff",
-                        retriever=vectorstore.as_retriever()
-                    )
-                    
-                    # Generate documentation
-                    logger.info("Generating documentation...")
-                    query = "Document this integration. Explain what it does in simple terms, including the source systems, transformations, and target systems."
-                    result = qa_chain.invoke(query)["result"]
-                    logger.info("Documentation generated successfully")
-                    
-                    # Format and return the result based on requested output format
-                    if output_format == OutputFormat.html:
-                        return {"documentation": result, "format": "html"}
-                    
-                    # Create file name based on input file
-                    base_filename = filename.rsplit('.', 1)[0]
-                    
-                    if output_format == OutputFormat.markdown:
-                        # Save the markdown content
-                        md_filename = f"{base_filename}.md"
-                        md_filepath = f"/data/{md_filename}"
-                        with open(md_filepath, "w") as f:
-                            f.write(f"# Integration Documentation: {base_filename}\n\n{result}")
-                        
-                        return {
-                            "documentation": result,
-                            "format": "markdown",
-                            "filename": md_filename,
-                            "download_url": f"/download/{md_filename}"
-                        }
-                    
-                    elif output_format == OutputFormat.pdf:
-                        # Convert to PDF
-                        pdf_filename = f"{base_filename}.pdf"
-                        pdf_filepath = f"/data/{pdf_filename}"
-                        
-                        # Create HTML content for PDF
-                        html_content = f"""
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <title>Integration Documentation: {base_filename}</title>
-                            <style>
-                                body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }}
-                                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
-                                .content {{ margin-top: 20px; white-space: pre-wrap; }}
-                            </style>
-                        </head>
-                        <body>
-                            <h1>Integration Documentation: {base_filename}</h1>
-                            <div class="content">{result}</div>
-                        </body>
-                        </html>
-                        """
-                        
-                        try:
-                            # Generate PDF file
-                            pdfkit.from_string(html_content, pdf_filepath)
-                            
-                            return {
-                                "documentation": result,
-                                "format": "pdf",
-                                "filename": pdf_filename,
-                                "download_url": f"/download/{pdf_filename}"
-                            }
-                        except Exception as e:
-                            logger.error(f"Error generating PDF: {str(e)}")
-                            # Fall back to HTML if PDF generation fails
-                            return {
-                                "documentation": result,
-                                "format": "html",
-                                "error": f"Failed to generate PDF: {str(e)}"
-                            }
-                except Exception as e:
-                    logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
-                    if attempt == max_retries - 1:
-                        return JSONResponse(
-                            status_code=503,
-                            content={"error": f"Failed to generate documentation after {max_retries} attempts: {str(e)}"}
-                        )
-                    logger.warning(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
     
     except Exception as e:
         logger.error(f"Error in analyze-smart: {str(e)}")
@@ -2045,7 +1718,7 @@ async def web_crawl_for_training(config: WebScrapingConfig):
                                 # Skip URLs that have already been crawled or queued
                                 if next_url in crawled_urls or any(next_url == u for u, _ in urls_to_crawl):
                                     continue
-                                    
+                                
                                 # Check include/exclude patterns
                                 if should_crawl_url(next_url, config.include_patterns, config.exclude_patterns):
                                     urls_to_crawl.append((next_url, current_depth + 1))
@@ -2228,232 +1901,6 @@ def extract_main_content(soup):
         h.ignore_images = True
         return h.handle(str(soup.body)) if soup.body else ""
 
-def is_same_domain(base_url, url):
-    """Check if two URLs belong to the same domain."""
-    try:
-        base_domain = urlparse(base_url).netloc
-        url_domain = urlparse(url).netloc
-        
-        # Allow subdomains of the base domain
-        return url_domain == base_domain or url_domain.endswith('.' + base_domain)
-    except:
-        return False
-
-def should_crawl_url(url, include_patterns=None, exclude_patterns=None):
-    """Determine if a URL should be crawled based on inclusion/exclusion patterns."""
-    path = urlparse(url).path
-    
-    # Check exclusion patterns first (if any match, don't crawl)
-    if exclude_patterns:
-        for pattern in exclude_patterns:
-            if pattern in path:
-                return False
-    
-    # If we have inclusion patterns, at least one must match
-    if include_patterns:
-        for pattern in include_patterns:
-            if pattern in path:
-                return True
-        # If we have inclusion patterns and none matched, don't crawl
-        return False
-    
-    # If no include patterns specified, crawl by default
-    return True
-
-def create_vectorstore_from_web_crawl(data_path, training_id):
-    """Create training documents from web crawl data and add them to the vector store."""
-    logger.info(f"Creating vector store from web crawl data: {data_path}")
-    
-    try:
-        # Load the crawled data
-        with open(data_path, 'r') as f:
-            data = json.load(f)
-        
-        title = data.get('title', 'Web Documentation')
-        source_url = data.get('source_url', '')
-        pages = data.get('pages', [])
-        
-        # Skip if no pages
-        if not pages:
-            logger.warning(f"No pages found in web crawl data file: {data_path}")
-            return
-        
-        # Initialize the text splitter for chunking large content
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,  # Smaller chunks to stay under token limits
-            chunk_overlap=100,
-            length_function=len,
-            is_separator_regex=False,
-        )
-        
-        # Create documents for each page, splitting large content
-        documents = []
-        
-        for page in pages:
-            # Skip pages with minimal content
-            if len(page.get('content', '').strip()) < 100:
-                continue
-                
-            content = page.get('content', '')
-            page_url = page.get('url', '')
-            page_title = page.get('title', 'No Title')
-            
-            # Split the content into smaller chunks
-            if len(content) > 1500:  # Only split if content is large
-                logger.info(f"Splitting large content from page: {page_title} ({len(content)} chars)")
-                chunks = text_splitter.split_text(content)
-                
-                # Create a document for each chunk
-                for i, chunk in enumerate(chunks):
-                    doc = Document(
-                        page_content=chunk,
-                        metadata={
-                            'source': 'web_crawl',
-                            'training_id': training_id,
-                            'url': page_url,
-                            'title': f"{page_title} (Part {i+1}/{len(chunks)})",
-                            'source_title': title,
-                            'source_url': source_url,
-                            'chunk': i,
-                            'total_chunks': len(chunks)
-                        }
-                    )
-                    documents.append(doc)
-                logger.info(f"Created {len(chunks)} chunks from page: {page_title}")
-            else:
-                # For smaller content, create a single document
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        'source': 'web_crawl',
-                        'training_id': training_id,
-                        'url': page_url,
-                        'title': page_title,
-                        'source_title': title,
-                        'source_url': source_url
-                    }
-                )
-                documents.append(doc)
-        
-        # Skip if no documents created
-        if not documents:
-            logger.warning(f"No valid documents created from web crawl data: {data_path}")
-            return
-            
-        logger.info(f"Created {len(documents)} documents from web crawl data")
-        
-        # Initialize embeddings
-        embeddings = OllamaEmbeddings(
-            base_url="http://ollama:11434",
-            model="mistral"
-        )
-        
-        # Create a training directory
-        training_vectorstore_dir = "/data/training/vectorstore"
-        os.makedirs(training_vectorstore_dir, exist_ok=True)
-        
-        # Check if existing vectorstore
-        if os.path.exists(f"{training_vectorstore_dir}/chroma.sqlite3"):
-            # Load existing vectorstore
-            logger.info("Loading existing training vectorstore")
-            vectorstore = Chroma(
-                persist_directory=training_vectorstore_dir,
-                embedding_function=embeddings,
-                collection_name="training_examples"
-            )
-            # Add documents to existing vectorstore
-            vectorstore.add_documents(documents)
-        else:
-            # Create new vectorstore
-            logger.info("Creating new training vectorstore")
-            vectorstore = Chroma.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                persist_directory=training_vectorstore_dir,
-                collection_name="training_examples"
-            )
-        
-        # Persist changes
-        vectorstore.persist()
-        logger.info(f"Successfully added web crawl data to training vectorstore")
-        
-        # NEW CODE: Also save each page as an individual training example in the format 
-        # used by the UI's "Manage Training Examples" section
-        os.makedirs("/data/langchain", exist_ok=True)
-        for i, page in enumerate(pages):
-            if len(page.get('content', '').strip()) < 100:
-                continue
-                
-            # Create a unique ID for this example
-            example_id = str(uuid.uuid4())
-            page_title = page.get('title', 'Web Document')
-            sanitized_title = ''.join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in page_title)
-            truncated_title = sanitized_title[:30] if len(sanitized_title) > 30 else sanitized_title
-            
-            # Create a dummy JSON structure that mimics an integration
-            integration_json = {
-                "id": example_id,
-                "name": f"Web: {truncated_title}",
-                "source_url": page.get('url', ''),
-                "source": "web_crawl",
-                "training_id": training_id,
-                "content_type": "documentation"
-            }
-            
-            # Create the training example file
-            example_file = {
-                "integration_json": integration_json,
-                "documentation": page.get('content', '')
-            }
-            
-            # Save to a JSON file in the format expected by the UI
-            example_filename = f"{title.replace(' ', '_')}_{example_id}.json"
-            with open(f"/data/langchain/{example_filename}", 'w') as f:
-                json.dump(example_file, f, indent=2)
-                
-            # Also save as markdown for potential editing
-            md_filename = f"{title.replace(' ', '_')}_{example_id}.md"
-            with open(f"/data/langchain/{md_filename}", 'w') as f:
-                f.write(f"# {page_title}\n\n")
-                f.write(f"Source: {page.get('url', '')}\n\n")
-                f.write(page.get('content', ''))
-                
-            logger.info(f"Saved web training example: {example_filename}")
-        
-    except Exception as e:
-        logger.error(f"Error creating vectorstore from web crawl data: {str(e)}")
-        raise
-
-def extract_axway_api_content(html_text):
-    """Extract content from Axway documentation that might be loaded via API/JavaScript."""
-    try:
-        # Look for JSON content embedded in the page
-        # Axway docs store content in JavaScript variables
-        content_match = re.search(r'\"content\":\s*\"(.*?)\"', html_text, re.DOTALL)
-        if content_match:
-            content = content_match.group(1)
-            # Unescape the content
-            content = content.replace('\\n', '\n').replace('\\\"', '\"').replace('\\\\', '\\')
-            return content
-            
-        # Alternative pattern search for Axway docs
-        doc_match = re.search(r'\"topic\":\s*{(.*?)}}', html_text, re.DOTALL)
-        if doc_match:
-            topic_json = "{" + doc_match.group(1) + "}}"
-            try:
-                # Try to parse as JSON
-                import json
-                topic_data = json.loads(topic_json)
-                if "body" in topic_data:
-                    return topic_data["body"]
-            except:
-                pass
-                
-        return None
-    except Exception as e:
-        logger.error(f"Error extracting Axway API content: {str(e)}")
-        return None
-
 def flatten_json(json_data, prefix=''):
     """
     Flatten a nested JSON structure into a flat dictionary.
@@ -2540,7 +1987,7 @@ def analyze_integration_flow(integration_id, extract_dir):
                 "description": component.get("description", ""),
                 "type": component.get("type", ""),
                 "parent_id": component.get("parentId", None),
-                "order": None,  # Will be filled later if available
+                "order": None,
                 "properties": {}
             }
             
@@ -2619,6 +2066,316 @@ def analyze_integration_flow(integration_id, extract_dir):
     except Exception as e:
         logger.error(f"Error analyzing integration flow: {str(e)}")
         return None
+
+@app.post("/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    """
+    Upload an image file for analysis.
+    Returns the file path for further processing.
+    """
+    try:
+        logger.info(f"Receiving image file: {file.filename}")
+        
+        # Generate a unique ID for this upload
+        upload_id = str(uuid.uuid4())
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        image_filename = f"{upload_id}{file_extension}"
+        image_path = f"/data/uploads/{image_filename}"
+        
+        # Save the uploaded image file
+        content = await file.read()
+        with open(image_path, "wb") as f:
+            f.write(content)
+        
+        logger.info(f"Image file saved to {image_path}")
+        
+        return ImageUploadResponse(
+            filename=file.filename,
+            file_path=image_path,
+            message="Image uploaded successfully"
+        )
+    except Exception as e:
+        logger.error(f"Error processing image file: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing image file: {str(e)}"
+        )
+
+@app.post("/analyze-image")
+async def analyze_image(request: ImageAnalysisRequest):
+    """
+    Analyze an integration flow diagram image and generate structured documentation about the integration.
+    Uses a multimodal model that can actually process images.
+    """
+    try:
+        logger.info(f"Starting analysis of integration flow diagram: {request.image_path}")
+        
+        # Check if the image file exists
+        if not os.path.exists(request.image_path):
+            raise HTTPException(
+                status_code=404,
+                detail="Image file not found. Please upload the image again."
+            )
+        
+        # Check if Ollama service is available
+        try:
+            logger.info("Checking if Ollama service is available...")
+            response = requests.get("http://ollama:11434", timeout=5)
+            if response.status_code >= 400:
+                logger.error(f"Ollama service returned status code: {response.status_code}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Ollama service is not responding correctly. Please check if the service is running properly."
+                )
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Cannot connect to Ollama service: {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Cannot connect to Ollama service: {str(e)}. Please ensure the Ollama container is running."
+            )
+        
+        # Check if llava model is available
+        try:
+            logger.info("Checking if llava model is available...")
+            response = requests.get("http://ollama:11434/api/tags", timeout=5)
+            models = []
+            
+            if response.status_code == 200:
+                models_data = response.json()
+                if "models" in models_data:
+                    models = [model.get("name") for model in models_data["models"]]
+            
+            # Look for llava model
+            if "llava" not in models:
+                logger.warning("llava model not found. Attempting to pull it...")
+                # Try to pull the llava model
+                pull_response = requests.post(
+                    "http://ollama:11434/api/pull",
+                    json={"name": "llava"},
+                    timeout=300  # 5 minutes timeout for model download
+                )
+                
+                if pull_response.status_code != 200:
+                    logger.error(f"Failed to pull llava model: {pull_response.status_code}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Could not find or download llava model. Please run 'docker exec -it ollama ollama pull llava' to install it."
+                    )
+                logger.info("Successfully pulled llava model")
+            else:
+                logger.info("llava model is available")
+        except Exception as e:
+            logger.error(f"Error checking/pulling llava model: {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Error setting up llava model: {str(e)}. Try running 'docker exec -it ollama ollama pull llava' manually."
+            )
+        
+        # Load the image
+        try:
+            image = Image.open(request.image_path)
+            
+            # Resize if the image is too large - balance between size and quality
+            max_size = (800, 800)  # Multimodal models can handle larger images than text-only models
+            if image.width > max_size[0] or image.height > max_size[1]:
+                image.thumbnail(max_size, Image.LANCZOS)
+            
+            # Convert image to base64 for model processing
+            buffered = BytesIO()
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            # Use good quality for multimodal models
+            image.save(buffered, format="JPEG", quality=85)
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            
+            logger.info(f"Image processed: {image.width}x{image.height}, base64 length: {len(img_str)}")
+        except Exception as e:
+            logger.error(f"Error processing image: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing image: {str(e)}"
+            )
+        
+        # Initialize LLM with retry logic
+        max_retries = 3
+        retry_delay = 10  # Seconds between retries
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"LLM attempt {attempt + 1}: Setting up llava for flow diagram analysis...")
+                
+                # Specialized prompt for integration flow diagrams
+                prompt = f"""Analyze this integration flow diagram image in detail. 
+
+This is an integration flow diagram showing how data moves between systems. Document it by providing:
+1. An overview of the integration's purpose
+2. A detailed description of all components visible in the diagram 
+3. The data flow between components showing the sequence of operations
+4. Any error handling or conditional logic shown
+
+Format your response as structured markdown with headings and bullet points.
+"""
+                
+                # Call Ollama API with increased timeout and optimized configuration
+                logger.info("Sending request to Ollama with llava model for flow diagram analysis")
+                
+                # Use a longer timeout to accommodate processing
+                llm_response = requests.post(
+                    "http://ollama:11434/api/generate",
+                    json={
+                        "model": "llava",  # Use llava multimodal model instead of mistral
+                        "prompt": prompt,
+                        "images": [img_str],  # Pass image separately for multimodal models
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.2,
+                            "top_k": 40,
+                            "top_p": 0.9,
+                            "num_predict": 2048
+                        }
+                    },
+                    timeout=300  # 5 minute timeout for complex diagram analysis
+                )
+                
+                if llm_response.status_code == 200:
+                    response_data = llm_response.json()
+                    analysis_text = response_data.get("response", "")
+                    
+                    if not analysis_text:
+                        raise Exception("Empty response from language model")
+                    
+                    # Check for common error responses
+                    if "I cannot see any image" in analysis_text or "I don't see any image" in analysis_text:
+                        logger.error("llava model couldn't process the image properly")
+                        raise Exception("The llava model couldn't process the image properly. It may be corrupted or in an unsupported format.")
+                    
+                    logger.info("Integration flow documentation generated successfully")
+                    
+                    # Format and return the result based on requested output format
+                    if request.format == OutputFormat.html:
+                        # Convert markdown to HTML for display
+                        html_doc = markdown.markdown(analysis_text)
+                        return {"documentation": html_doc, "format": "html"}
+                    
+                    # Create file name based on original image
+                    base_filename = os.path.basename(request.image_path).rsplit('.', 1)[0]
+                    
+                    if request.format == OutputFormat.markdown:
+                        # Save the markdown content
+                        md_filename = f"{base_filename}_integration_doc.md"
+                        md_filepath = f"/data/{md_filename}"
+                        with open(md_filepath, "w") as f:
+                            f.write(f"# Integration Flow Documentation: {base_filename}\n\n{analysis_text}")
+                        
+                        return {
+                            "documentation": analysis_text,
+                            "format": "markdown",
+                            "filename": md_filename,
+                            "download_url": f"/download/{md_filename}"
+                        }
+                    
+                    elif request.format == OutputFormat.pdf:
+                        # Convert to PDF
+                        pdf_filename = f"{base_filename}_integration_doc.pdf"
+                        pdf_filepath = f"/data/{pdf_filename}"
+                        
+                        # Create HTML content for PDF with side-by-side image and documentation
+                        html_content = f"""
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <title>Integration Flow Documentation: {base_filename}</title>
+                            <style>
+                                body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }}
+                                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                                .content {{ margin-top: 20px; }}
+                                .image-container {{ text-align: center; margin-bottom: 20px; }}
+                                img {{ max-width: 100%; max-height: 500px; border: 1px solid #ddd; }}
+                                h2 {{ color: #3498db; margin-top: 20px; }}
+                                h3 {{ color: #2980b9; }}
+                                .component {{ margin-bottom: 15px; }}
+                                .component-details {{ margin-left: 20px; }}
+                                pre {{ background-color: #f8f9fa; padding: 10px; border-radius: 5px; }}
+                            </style>
+                        </head>
+                        <body>
+                            <h1>Integration Flow Documentation: {base_filename}</h1>
+                            
+                            <div class="image-container">
+                                <img src="data:image/jpeg;base64,{img_str}" alt="Integration Flow Diagram">
+                                <p><em>Integration Flow Diagram</em></p>
+                            </div>
+                            
+                            <div class="content">
+                                {markdown.markdown(analysis_text)}
+                            </div>
+                        </body>
+                        </html>
+                        """
+                        
+                        try:
+                            # Generate PDF file
+                            pdfkit.from_string(html_content, pdf_filepath)
+                            
+                            return {
+                                "documentation": markdown.markdown(analysis_text),
+                                "format": "pdf",
+                                "filename": pdf_filename,
+                                "download_url": f"/download/{pdf_filename}"
+                            }
+                        except Exception as e:
+                            logger.error(f"Error generating PDF: {str(e)}")
+                            # Fall back to HTML if PDF generation fails
+                            return {
+                                "documentation": markdown.markdown(analysis_text),
+                                "format": "html",
+                                "error": f"Failed to generate PDF: {str(e)}"
+                            }
+                else:
+                    logger.error(f"LLM API error: {llm_response.status_code}, {llm_response.text}")
+                    raise Exception(f"LLM API returned status code {llm_response.status_code}: {llm_response.text}")
+                
+            except requests.exceptions.Timeout as e:
+                logger.error(f"LLM attempt {attempt + 1} timed out: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Image analysis is taking longer than expected. This could be due to the complexity of the image or the server load. Please try again later."
+                    )
+                logger.warning(f"Request timed out. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            except Exception as e:
+                logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Failed to analyze integration flow diagram: {str(e)}"
+                    )
+                logger.warning(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in analyze-image: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error analyzing integration flow diagram: {str(e)}"
+        )
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    """Download a generated file (markdown or PDF)"""
+    file_path = f"/data/{filename}"
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        path=file_path, 
+        filename=filename,
+        media_type="application/octet-stream"
+    )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)

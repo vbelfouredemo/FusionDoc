@@ -22,3 +22,6 @@ playwright>=1.41.1
 # Keep selenium as optional if needed
 selenium>=4.11.2
 webdriver-manager>=4.0.0
+# Image processing libraries
+Pillow>=10.0.0
+base64io>=1.0.3
