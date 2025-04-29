@@ -2377,5 +2377,123 @@ async def download_file(filename: str):
         media_type="application/octet-stream"
     )
 
+def is_same_domain(base_url, check_url):
+    """
+    Check if the check_url is in the same domain as the base_url.
+    """
+    try:
+        base_domain = urlparse(base_url).netloc
+        check_domain = urlparse(check_url).netloc
+        return base_domain == check_domain
+    except:
+        return False
+
+def should_crawl_url(url, include_patterns=None, exclude_patterns=None):
+    """
+    Determine if a URL should be crawled based on include and exclude patterns.
+    """
+    # Skip media files, backend URLs, etc.
+    skip_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.zip', '.tar', '.gz', '.svg', '.mp4', '.mp3', '.mov']
+    for ext in skip_extensions:
+        if url.lower().endswith(ext):
+            return False
+    
+    # Skip URLs with fragment identifiers (anchors)
+    if '#' in url:
+        url = url.split('#')[0]
+    
+    # Apply include patterns if specified
+    if include_patterns and len(include_patterns) > 0:
+        should_include = False
+        for pattern in include_patterns:
+            if pattern in url:
+                should_include = True
+                break
+        if not should_include:
+            return False
+    
+    # Apply exclude patterns if specified
+    if exclude_patterns and len(exclude_patterns) > 0:
+        for pattern in exclude_patterns:
+            if pattern in url:
+                return False
+    
+    return True
+
+async def create_vectorstore_from_web_crawl(training_data_path, training_id):
+    """
+    Create a vectorstore from web crawl data.
+    """
+    try:
+        # Load the training data
+        with open(training_data_path, 'r') as f:
+            training_data = json.load(f)
+        
+        # Initialize embeddings
+        embeddings = OllamaEmbeddings(
+            base_url="http://ollama:11434",
+            model="mistral"
+        )
+        
+        # Create documents from the crawled pages
+        documents = []
+        
+        for page in training_data.get('pages', []):
+            title = page.get('title', 'No Title')
+            content = page.get('content', '')
+            url = page.get('url', '')
+            
+            if content:
+                # Create document with metadata
+                doc = Document(
+                    page_content=content,
+                    metadata={
+                        "title": title,
+                        "url": url,
+                        "source": "web_crawl",
+                        "training_id": training_id
+                    }
+                )
+                documents.append(doc)
+        
+        logger.info(f"Created {len(documents)} documents from web crawl data")
+        
+        if not documents:
+            logger.warning("No documents created from web crawl data")
+            return
+        
+        # Create vectorstore directory
+        vectorstore_dir = "/data/training/vectorstore"
+        os.makedirs(vectorstore_dir, exist_ok=True)
+        
+        # Check if existing vectorstore
+        if os.path.exists(f"{vectorstore_dir}/chroma.sqlite3"):
+            # Load existing vectorstore
+            logger.info("Loading existing training vectorstore")
+            vectorstore = Chroma(
+                persist_directory=vectorstore_dir,
+                embedding_function=embeddings,
+                collection_name="training_examples"
+            )
+            # Add documents to existing vectorstore
+            vectorstore.add_documents(documents)
+        else:
+            # Create new vectorstore
+            logger.info("Creating new training vectorstore")
+            vectorstore = Chroma.from_documents(
+                documents=documents,
+                embedding=embeddings,
+                persist_directory=vectorstore_dir,
+                collection_name="training_examples"
+            )
+        
+        # Persist changes
+        vectorstore.persist()
+        logger.info(f"Successfully added web crawl data to training vectorstore")
+        
+    except Exception as e:
+        logger.error(f"Error creating vectorstore from web crawl data: {str(e)}")
+        raise
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
