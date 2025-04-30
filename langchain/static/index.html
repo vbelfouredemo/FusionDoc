@@ -575,6 +575,75 @@
             display: block;
         }
 
+        /* Integration Section and Training Examples Styles */
+        .integration-section {
+            margin-bottom: 30px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 20px;
+        }
+        .integration-section:last-child {
+            border-bottom: none;
+        }
+        .training-examples {
+            margin-top: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            border: 1px solid #e9ecef;
+        }
+        .training-examples h4 {
+            margin-top: 0;
+            color: #3498db;
+            font-size: 16px;
+        }
+        .examples-list {
+            margin-top: 10px;
+        }
+        .training-example {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .training-example:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .training-example h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        .similarity-score {
+            color: #7f8c8d;
+            font-weight: normal;
+            font-size: 13px;
+        }
+        .example-content {
+            padding: 10px;
+            background-color: #fffde7;
+            border-left: 3px solid #ffd54f;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .highlighted-text {
+            position: relative;
+        }
+        .highlighted-text::before {
+            content: '';
+            position: absolute;
+            left: -3px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background-color: #ffc107;
+        }
+        .highlight-similar {
+            background-color: #fef9e7;
+            border-left: 3px solid #f39c12;
+            padding: 2px 5px;
+            display: block;
+        }
         /* Image Analysis styles */
         .image-preview {
             max-width: 100%;
@@ -602,6 +671,7 @@
             <div class="tab active" data-tab="generate">Generate Documentation</div>
             <div class="tab" data-tab="train">Train the Model</div>
             <div class="tab" data-tab="image">Image Analysis</div>
+            <div class="tab" data-tab="settings">Settings</div>
         </div>
         
         <!-- Generate Documentation Tab -->
@@ -649,7 +719,18 @@
                     </div>
                 </div>
                 
-                <div style="display: flex; gap: 10px;">
+                <!-- Add verbose mode option -->
+                <div class="verbose-option" style="margin-top: 1rem; padding: 0.5rem 1rem; background-color: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="verbose-mode" style="margin-right: 8px;">
+                        <span>Verbose Mode (Show similar examples from training data)</span>
+                    </label>
+                    <p style="margin-top: 5px; margin-bottom: 0; font-size: 13px; color: #6c757d;">
+                        Enable to see training examples similar to your integration when using Smart Documentation
+                    </p>
+                </div>
+                
+                <div style="display: flex; gap: 10px; margin-top: 1rem;">
                     <button id="analyze" class="analyze-btn">Generate Documentation</button>
                     <button id="analyze-smart" class="analyze-btn analyze-smart-btn">Generate Smart Documentation</button>
                 </div>
@@ -796,6 +877,15 @@
                         </div>
                     </div>
                     
+                    <!-- Vector store cleanup warning section -->
+                    <div class="cleanup-warning" style="margin-top: 20px; background-color: #ffebee; border: 1px solid #f44336; border-radius: 5px; padding: 15px;">
+                        <h3 style="color: #d32f2f; margin-top: 0;">Disk Space Management</h3>
+                        <p>⚠️ <strong>Warning:</strong> The system has detected numerous temporary vector stores that may be using excessive disk space. Cleaning up these temporary files can improve performance.</p>
+                        <p style="font-size: 14px; color: #555;">This action will remove all temporary vector store directories created during document generation, but will not affect your training data or examples.</p>
+                        <button id="cleanup-vectorstores-btn" class="action-button" style="background-color: #f44336; margin-top: 10px;">Clean Up Temporary Vector Stores</button>
+                        <div id="cleanup-result" style="margin-top: 10px; display: none; padding: 8px; border-radius: 4px;"></div>
+                    </div>
+                    
                     <!-- Add training data management section -->
                     <div class="training-management">
                         <h3>Manage Training Examples</h3>
@@ -848,6 +938,7 @@
                 </div>
                 
                 <button id="analyze-image" class="analyze-btn">Analyze Image</button>
+                <button id="analyze-image-smart" class="analyze-btn analyze-smart-btn">Smart Analyze Image</button>
                 
                 <div class="loading" id="image-loading">
                     <div class="spinner"></div>
@@ -858,6 +949,62 @@
             </div>
             
             <div id="image-result"></div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div class="tab-content" id="settings-tab">
+            <div class="card">
+                <h2>Settings</h2>
+                <p>Configure application settings and select which AI model to use for documentation generation.</p>
+                
+                <!-- Model Selection Section -->
+                <div class="settings-section">
+                    <h3>LLM Model Selection</h3>
+                    <p>Choose which large language model to use for generating documentation. More powerful models may provide higher quality output but require more computational resources.</p>
+                    
+                    <div class="loading" id="models-loading">
+                        <div class="spinner"></div>
+                        <p>Loading available models...</p>
+                    </div>
+                    
+                    <div class="error" id="models-error"></div>
+                    
+                    <div id="models-container" style="display: none;">
+                        <div class="models-list" id="models-list">
+                            <!-- Models will be listed here -->
+                        </div>
+                        
+                        <div class="model-details" id="model-details" style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef; display: none;">
+                            <h4 id="selected-model-name">Model Name</h4>
+                            <p id="selected-model-description">Description</p>
+                            <div class="model-specs">
+                                <span id="model-quality-badge" class="badge" style="display: inline-block; padding: 5px 10px; border-radius: 4px; margin-right: 10px; font-size: 12px; font-weight: bold;"></span>
+                                <span id="model-ram" style="display: inline-block; margin-right: 10px; font-size: 14px;"></span>
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <button id="set-model-btn" class="action-button">Set Active Model</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="model-success" style="margin-top: 15px; padding: 10px; border-radius: 5px; background-color: #d4edda; color: #155724; display: none;"></div>
+                </div>
+                
+                <!-- System Information Section (optional) -->
+                <div class="settings-section" style="margin-top: 30px;">
+                    <h3>System Information</h3>
+                    <div class="metrics-dashboard">
+                        <div class="metric-card">
+                            <div class="metric-label">Current Model</div>
+                            <div class="metric-value" id="current-model-display">Loading...</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Status</div>
+                            <div class="metric-value" id="model-status-display">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -905,6 +1052,23 @@
             const tabs = document.querySelectorAll('.tab');
             const tabContents = document.querySelectorAll('.tab-content');
             
+            // Settings tab elements initialization
+            const modelsLoading = document.getElementById('models-loading');
+            const modelsError = document.getElementById('models-error');
+            const modelsContainer = document.getElementById('models-container');
+            const modelsList = document.getElementById('models-list');
+            const modelDetails = document.getElementById('model-details');
+            const selectedModelName = document.getElementById('selected-model-name');
+            const selectedModelDescription = document.getElementById('selected-model-description');
+            const modelQualityBadge = document.getElementById('model-quality-badge');
+            const modelRam = document.getElementById('model-ram');
+            const setModelBtn = document.getElementById('set-model-btn');
+            const modelSuccess = document.getElementById('model-success');
+            const currentModelDisplay = document.getElementById('current-model-display');
+            const modelStatusDisplay = document.getElementById('model-status-display');
+            
+            let selectedModel = null;
+            
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
                     const tabId = tab.getAttribute('data-tab');
@@ -922,8 +1086,200 @@
                         loadTrainingStatus();
                         loadTrainingExamples();
                     }
+                    
+                    // If settings tab is clicked, load models
+                    if (tabId === 'settings') {
+                        loadModels();
+                    }
                 });
             });
+            
+            // Load models function
+            async function loadModels() {
+                modelsLoading.style.display = 'block';
+                modelsError.style.display = 'none';
+                modelsContainer.style.display = 'none';
+                modelSuccess.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/models');
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        displayModels(data);
+                    } else {
+                        showModelsError(data.error || 'Failed to load available models');
+                    }
+                } catch (error) {
+                    showModelsError('An error occurred: ' + error.message);
+                } finally {
+                    modelsLoading.style.display = 'none';
+                }
+            }
+            
+            // Display models in the UI
+            function displayModels(data) {
+                // Update current model display
+                currentModelDisplay.textContent = data.current_model || 'Not set';
+                modelStatusDisplay.textContent = 'Ready';
+                
+                // Clear previous models
+                modelsList.innerHTML = '';
+                
+                if (!data.available_models || data.available_models.length === 0) {
+                    modelsList.innerHTML = '<p>No models found.</p>';
+                    modelsContainer.style.display = 'block';
+                    return;
+                }
+                
+                // Create model items
+                let modelsHTML = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
+                
+                data.available_models.forEach(model => {
+                    // Set badge color based on quality
+                    const qualityColor = model.quality === 'High' ? '#27ae60' : 
+                                        (model.quality === 'Medium' ? '#f39c12' : 
+                                        (model.quality === 'Very High' ? '#8e44ad' : '#7f8c8d'));
+                    
+                    // Create special styling for current model
+                    const isCurrent = model.current ? 'border: 2px solid #3498db; box-shadow: 0 0 10px rgba(52, 152, 219, 0.2);' : '';
+                    const currentBadge = model.current ? '<span style="position: absolute; top: 10px; right: 10px; background-color: #3498db; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">Current</span>' : '';
+                    
+                    modelsHTML += `
+                        <div class="model-item" style="background-color: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; cursor: pointer; ${isCurrent}" data-model="${model.name}">
+                            ${currentBadge}
+                            <h4 style="margin-top: 0; margin-bottom: 10px;">${model.name}</h4>
+                            <p style="font-size: 14px; color: #666; margin-bottom: 15px; height: 40px; overflow: hidden;">${model.description}</p>
+                            <div style="display: flex; align-items: center; font-size: 12px;">
+                                <span style="background-color: ${qualityColor}; color: white; padding: 3px 8px; border-radius: 3px; margin-right: 8px;">${model.quality}</span>
+                                <span>${model.min_ram}</span>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 12px; color: #888;">
+                                ${model.installed ? '<span style="color: #27ae60;">✓ Installed</span>' : '<span style="color: #e74c3c;">✗ Not Installed</span>'}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                modelsHTML += '</div>';
+                modelsList.innerHTML = modelsHTML;
+                
+                // Add click event to each model item
+                const modelItems = modelsList.querySelectorAll('.model-item');
+                modelItems.forEach(item => {
+                    item.addEventListener('click', () => {
+                        // Remove active class from all items
+                        modelItems.forEach(i => i.style.backgroundColor = 'white');
+                        
+                        // Add active class to clicked item
+                        item.style.backgroundColor = '#f8f9fa';
+                        
+                        // Get selected model
+                        const modelName = item.getAttribute('data-model');
+                        selectedModel = data.available_models.find(m => m.name === modelName);
+                        
+                        // Update model details
+                        displayModelDetails(selectedModel);
+                    });
+                });
+                
+                // Show models container
+                modelsContainer.style.display = 'block';
+            }
+            
+            // Display selected model details
+            function displayModelDetails(model) {
+                if (!model) return;
+                
+                // Set model name and description
+                selectedModelName.textContent = model.name;
+                selectedModelDescription.textContent = model.description;
+                
+                // Set quality badge
+                modelQualityBadge.textContent = model.quality;
+                const qualityColor = model.quality === 'High' ? '#27ae60' : 
+                                    (model.quality === 'Medium' ? '#f39c12' : 
+                                    (model.quality === 'Very High' ? '#8e44ad' : '#7f8c8d'));
+                modelQualityBadge.style.backgroundColor = qualityColor;
+                
+                // Set RAM requirements
+                modelRam.textContent = `RAM: ${model.min_ram}`;
+                
+                // Show model details
+                modelDetails.style.display = 'block';
+                
+                // Disable set button if it's already the current model
+                setModelBtn.disabled = model.current;
+                setModelBtn.textContent = model.current ? 'Current Model' : 'Set Active Model';
+                
+                // Gray out button if it's the current model
+                if (model.current) {
+                    setModelBtn.style.backgroundColor = '#95a5a6';
+                    setModelBtn.style.cursor = 'default';
+                } else {
+                    setModelBtn.style.backgroundColor = '#3498db';
+                    setModelBtn.style.cursor = 'pointer';
+                }
+            }
+            
+            // Show models error
+            function showModelsError(message) {
+                modelsError.textContent = message;
+                modelsError.style.display = 'block';
+                modelsContainer.style.display = 'none';
+            }
+            
+            // Set active model
+            setModelBtn.addEventListener('click', async () => {
+                if (!selectedModel || selectedModel.current) return;
+                
+                // Show loading state
+                setModelBtn.disabled = true;
+                setModelBtn.textContent = 'Setting model...';
+                modelSuccess.style.display = 'none';
+                
+                try {
+                    // Prepare form data
+                    const formData = new FormData();
+                    formData.append('model_name', selectedModel.name);
+                    
+                    const response = await fetch('/models/set', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Show success message
+                        modelSuccess.innerHTML = `
+                            <strong>Success!</strong> Model has been changed to <strong>${selectedModel.name}</strong>.
+                            The new model will be used for all future documentation generation.
+                        `;
+                        modelSuccess.style.display = 'block';
+                        
+                        // Update current model display
+                        currentModelDisplay.textContent = selectedModel.name;
+                        
+                        // Reload models to update UI
+                        loadModels();
+                    } else {
+                        throw new Error(data.error || 'Failed to set active model');
+                    }
+                } catch (error) {
+                    // Show error
+                    showModelsError(error.message);
+                } finally {
+                    // Reset button state
+                    setModelBtn.disabled = false;
+                    setModelBtn.textContent = 'Set Active Model';
+                }
+            });
+            
+            // Load models on page load if settings tab is active
+            if (document.querySelector('.tab[data-tab="settings"]').classList.contains('active')) {
+                loadModels();
+            }
             
             // Subtab switching functionality
             const subTabs = document.querySelectorAll('.sub-tab');
@@ -1134,6 +1490,12 @@
                     analyzeFormData.append('output_format', selectedFormat);
                     analyzeFormData.append('integrations', JSON.stringify(selectedIntegrations));
                     
+                    // Add verbose mode parameter for smart generation
+                    if (useSmartGeneration) {
+                        const verboseMode = document.getElementById('verbose-mode').checked;
+                        analyzeFormData.append('verbose', verboseMode);
+                    }
+                    
                     // Choose the endpoint based on whether smart generation is requested
                     const endpoint = useSmartGeneration ? '/analyze-smart' : '/analyze-with-format';
                     
@@ -1147,9 +1509,51 @@
                     if (analyzeResponse.ok && analyzeData.documentation) {
                         let resultHTML = `
                             <div class="card">
-                                <h2>Integration Documentation${useSmartGeneration ? ' (Smart)' : ''}</h2>
-                                <div class="documentation">${analyzeData.documentation}</div>
-                        `;
+                                <h2>Integration Documentation${useSmartGeneration ? ' (Smart)' : ''}</h2>`;
+                        
+                        // If verbose mode is enabled and there are training examples, display them
+                        const verboseMode = document.getElementById('verbose-mode').checked;
+                        if (useSmartGeneration && verboseMode && analyzeData.all_docs) {
+                            for (const doc of analyzeData.all_docs) {
+                                resultHTML += `<div class="integration-section">
+                                    <h3>${doc.name}</h3>`;
+                                
+                                // Add confidence score if available
+                                if (doc.confidence !== undefined) {
+                                    const confidenceClass = doc.confidence > 70 ? 'high' : (doc.confidence > 40 ? 'medium' : 'low');
+                                    resultHTML += `
+                                    <div class="confidence-indicator confidence-${confidenceClass}">
+                                        Confidence Score: ${doc.confidence}%
+                                    </div>`;
+                                }
+                                
+                                // Add documentation section
+                                resultHTML += `<div class="documentation">${doc.documentation}</div>`;
+                                
+                                // Add training examples if available
+                                if (doc.training_examples && doc.training_examples.length > 0) {
+                                    resultHTML += `
+                                    <div class="training-examples">
+                                        <h4>Similar Training Examples</h4>
+                                        <div class="examples-list">`;
+                                    
+                                    for (const example of doc.training_examples) {
+                                        resultHTML += `
+                                        <div class="training-example">
+                                            <h5>${example.title} <span class="similarity-score">(${example.similarity}% match)</span></h5>
+                                            <div class="example-content highlighted-text">${example.preview}</div>
+                                        </div>`;
+                                    }
+                                    
+                                    resultHTML += `</div></div>`;
+                                }
+                                
+                                resultHTML += `</div>`;
+                            }
+                        } else {
+                            // Standard documentation display
+                            resultHTML += `<div class="documentation">${analyzeData.documentation}</div>`;
+                        }
                         
                         // Add download button for markdown or PDF format
                         if (analyzeData.format === 'markdown' || analyzeData.format === 'pdf') {
@@ -1239,7 +1643,7 @@
             });
             
             function displayTrainingFile() {
-                if (trainingFile && trainingFile.name.toLowerCase().endswith('.zip')) {
+                if (trainingFile && trainingFile.name.toLowerCase().endsWith('.zip')) {
                     trainingError.style.display = 'none';
                     const reader = new FileReader();
                     
@@ -1457,6 +1861,65 @@
                         trainingManagementLoading.style.display = 'none';
                         rebuildVectorstoreBtn.disabled = false;
                         rebuildVectorstoreBtn.textContent = 'Rebuild Vector Database';
+                    }
+                });
+            }
+            
+            // Add event listener for cleanup vector stores button
+            const cleanupVectorstoresBtn = document.getElementById('cleanup-vectorstores-btn');
+            const cleanupResult = document.getElementById('cleanup-result');
+            
+            if (cleanupVectorstoresBtn) {
+                cleanupVectorstoresBtn.addEventListener('click', async () => {
+                    if (!confirm('Are you sure you want to clean up temporary vector stores? This will free up disk space but cannot be undone.')) {
+                        return;
+                    }
+                    
+                    const trainingLoading = document.getElementById('training-loading');
+                    cleanupResult.style.display = 'none';
+                    
+                    trainingLoading.style.display = 'block';
+                    cleanupVectorstoresBtn.disabled = true;
+                    cleanupVectorstoresBtn.textContent = 'Cleaning up...';
+                    
+                    try {
+                        const response = await fetch('/cleanup-vectorstores', {
+                            method: 'POST'
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            // Show success message with details
+                            cleanupResult.innerHTML = `
+                                <div style="background-color: #e8f5e9; color: #2e7d32; padding: 10px; border-radius: 4px;">
+                                    <strong>Success!</strong> ${data.message}<br>
+                                    <span style="font-size: 13px;">Removed ${data.cleaned} temporary vector stores.</span>
+                                </div>
+                            `;
+                            cleanupResult.style.display = 'block';
+                            
+                            // Refresh training status to reflect the changes
+                            loadTrainingStatus();
+                        } else {
+                            cleanupResult.innerHTML = `
+                                <div style="background-color: #ffebee; color: #c62828; padding: 10px; border-radius: 4px;">
+                                    <strong>Error:</strong> ${data.error || 'Failed to clean up vector stores'}
+                                </div>
+                            `;
+                            cleanupResult.style.display = 'block';
+                        }
+                    } catch (error) {
+                        cleanupResult.innerHTML = `
+                            <div style="background-color: #ffebee; color: #c62828; padding: 10px; border-radius: 4px;">
+                                <strong>Error:</strong> An unexpected error occurred: ${error.message}
+                            </div>
+                        `;
+                        cleanupResult.style.display = 'block';
+                    } finally {
+                        trainingLoading.style.display = 'none';
+                        cleanupVectorstoresBtn.disabled = false;
+                        cleanupVectorstoresBtn.textContent = 'Clean Up Temporary Vector Stores';
                     }
                 });
             }
@@ -1814,6 +2277,7 @@
             const imageDisplay = document.getElementById('image-display');
             const imagePreview = document.getElementById('image-preview');
             const analyzeImageBtn = document.getElementById('analyze-image');
+            const analyzeImageSmartBtn = document.getElementById('analyze-image-smart');
             const imageResult = document.getElementById('image-result');
             const imageLoading = document.getElementById('image-loading');
             const imageErrorMessage = document.getElementById('image-error-message');
@@ -1988,7 +2452,62 @@
                 }
             }
             
+            async function analyzeImageSmart() {
+                if (!uploadedImagePath) {
+                    showImageError('Please upload an image first');
+                    return;
+                }
+                
+                imageResult.innerHTML = '';
+                imageLoading.style.display = 'block';
+                imageErrorMessage.style.display = 'none';
+                
+                try {
+                    const selectedFormat = getSelectedImageFormat();
+                    
+                    const response = await fetch('/analyze-image-smart', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            image_path: uploadedImagePath,
+                            format: selectedFormat
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok && data.documentation) {
+                        let resultHTML = `
+                            <div class="card">
+                                <h2>Smart Image Analysis</h2>
+                                <div class="documentation">${data.documentation}</div>
+                        `;
+                        
+                        // Add download button for markdown or PDF format
+                        if (data.download_url) {
+                            resultHTML += `
+                                <a href="${data.download_url}" class="download-btn">
+                                    Download ${selectedFormat.toUpperCase()}
+                                </a>
+                            `;
+                        }
+                        
+                        resultHTML += `</div>`;
+                        imageResult.innerHTML = resultHTML;
+                    } else {
+                        showImageError(data.error || 'Failed to analyze image with smart processing');
+                    }
+                } catch (error) {
+                    showImageError('An error occurred: ' + error.message);
+                } finally {
+                    imageLoading.style.display = 'none';
+                }
+            }
+            
             analyzeImageBtn.addEventListener('click', analyzeImage);
+            analyzeImageSmartBtn.addEventListener('click', analyzeImageSmart);
         });
     </script>
 </body>

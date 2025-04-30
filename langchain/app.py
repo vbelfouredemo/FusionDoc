@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from typing import List, Optional, Dict, Any, Union
 import requests
 from bs4 import BeautifulSoup
@@ -18,6 +20,7 @@ import logging
 import markdown
 import pdfkit
 import tempfile
+import shutil  # Add import for directory cleanup
 
 # Update Playwright imports to use async version
 from playwright.async_api import async_playwright
@@ -42,6 +45,35 @@ from contextlib import asynccontextmanager
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("FusionDoc")
+
+# Get the LLM model from environment variable, or use default model
+# This allows switching models easily without changing code
+DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "mistral")
+logger.info(f"Using LLM model: {DEFAULT_LLM_MODEL}")
+
+# Define supported models and their requirements
+SUPPORTED_MODELS = {
+    "mistral": {
+        "description": "Fast medium-sized model with good results",
+        "min_ram": "8GB",
+        "quality": "Medium"
+    },
+    "llama3": {
+        "description": "High quality, recent model from Meta",
+        "min_ram": "16GB",
+        "quality": "High"
+    },
+    "llama3:70b": {
+        "description": "Very high quality large model, requires significant resources",
+        "min_ram": "32GB+",
+        "quality": "Very High"
+    },
+    "mixtral": {
+        "description": "High quality mixture-of-experts model",
+        "min_ram": "16GB",
+        "quality": "High"
+    }
+}
 
 class OutputFormat(str, Enum):
     html = "html"
@@ -103,7 +135,7 @@ async def lifespan(app: FastAPI):
             response = requests.get("http://ollama:11434", timeout=5)
             if response.status_code < 400:
                 # Ollama is up, now ensure Mistral is installed
-                if ensure_mistral_model():
+                if ensure_model():
                     logger.info("Startup completed: Ollama is running and Mistral model is available")
                     break
         except requests.exceptions.RequestException as e:
@@ -140,12 +172,16 @@ os.makedirs("/data", exist_ok=True)
 os.makedirs("/data/uploads", exist_ok=True)
 os.makedirs("/data/extracted", exist_ok=True)
 
-def ensure_mistral_model():
+def ensure_model(model=None):
     """
-    Check if Mistral model is installed in Ollama, and attempt to install it if not present.
+    Check if requested model is installed in Ollama, and attempt to install it if not present.
     Returns True if the model is available or was successfully installed, False otherwise.
+    
+    Args:
+        model: The model name to ensure is available. If None, uses DEFAULT_LLM_MODEL.
     """
-    logger.info("Checking if Mistral model is available in Ollama...")
+    model_to_check = model or DEFAULT_LLM_MODEL
+    logger.info(f"Checking if {model_to_check} model is available in Ollama...")
     
     try:
         # Check available models
@@ -153,26 +189,27 @@ def ensure_mistral_model():
         
         if response.status_code == 200:
             models = response.json().get("models", [])
+            model_names = [m.get("name") for m in models]
             
-            # Check if Mistral is already installed
-            if any(m.get("name") == "mistral" for m in models):
-                logger.info("Mistral model is already installed")
+            # Check if model is already installed
+            if any(m == model_to_check for m in model_names):
+                logger.info(f"{model_to_check} model is already installed")
                 return True
             
             # If not installed, try to pull it
-            logger.info("Mistral model not found. Attempting to pull it...")
+            logger.info(f"{model_to_check} model not found. Attempting to pull it...")
             
             pull_response = requests.post(
                 "http://ollama:11434/api/pull",
-                json={"name": "mistral"},
+                json={"name": model_to_check},
                 timeout=600  # Longer timeout for model download
             )
             
             if pull_response.status_code == 200:
-                logger.info("Successfully pulled Mistral model")
+                logger.info(f"Successfully pulled {model_to_check} model")
                 return True
             else:
-                logger.error(f"Failed to pull Mistral model: {pull_response.status_code}, {pull_response.text}")
+                logger.error(f"Failed to pull {model_to_check} model: {pull_response.status_code}, {pull_response.text}")
                 return False
         else:
             logger.error(f"Failed to check available models: {response.status_code}, {response.text}")
@@ -194,7 +231,7 @@ async def startup_event():
             response = requests.get("http://ollama:11434", timeout=5)
             if response.status_code < 400:
                 # Ollama is up, now ensure Mistral is installed
-                if ensure_mistral_model():
+                if ensure_model():
                     logger.info("Startup completed: Ollama is running and Mistral model is available")
                     break
         except requests.exceptions.RequestException as e:
@@ -422,7 +459,7 @@ async def analyze_file(filename: str = Form(...)):
                 logger.info(f"Embedding attempt {attempt + 1}: Initializing OllamaEmbeddings...")
                 embeddings = OllamaEmbeddings(
                     base_url="http://ollama:11434",
-                    model="mistral"
+                    model=DEFAULT_LLM_MODEL  # Use the configurable model instead of hard-coded "mistral"
                 )
                 
                 # Test embeddings with a simple input
@@ -462,7 +499,7 @@ async def analyze_file(filename: str = Form(...)):
                 logger.info(f"LLM attempt {attempt + 1}: Setting up retrieval chain...")
                 llm = Ollama(
                     base_url="http://ollama:11434", 
-                    model="mistral"
+                    model=DEFAULT_LLM_MODEL  # Use the configurable model instead of hard-coded "mistral"
                 )
                 qa_chain = RetrievalQA.from_chain_type(
                     llm=llm,
@@ -499,13 +536,40 @@ async def analyze_file(filename: str = Form(...)):
 async def analyze_file_with_format(
     filename: str = Form(...), 
     output_format: OutputFormat = Form(OutputFormat.html),
-    integrations: Optional[str] = Form(None)
+    integrations: Optional[str] = Form(None),
+    verbose: Optional[bool] = Form(False)
 ):
     """
     Analyze integration files from a ZIP archive and generate documentation.
+    
+    When verbose is True, additional information about the training examples used and
+    confidence scores will be included in the documentation.
     """
     try:
-        logger.info(f"Starting analysis of file: {filename} with output format: {output_format}")
+        logger.info(f"Starting analysis of file: {filename} with output format: {output_format}, verbose mode: {verbose}")
+        
+        # Initialize training_vectorstore if verbose mode is enabled
+        training_vectorstore = None
+        if verbose:
+            training_path = "/data/training/vectorstore"
+            if os.path.exists(training_path):
+                logger.info("Loading training vectorstore for verbose mode...")
+                try:
+                    # Initialize embeddings
+                    embeddings = OllamaEmbeddings(
+                        base_url="http://ollama:11434",
+                        model="mistral"
+                    )
+                    
+                    training_vectorstore = Chroma(
+                        persist_directory=training_path,
+                        embedding_function=embeddings,
+                        collection_name="training_examples"
+                    )
+                    logger.info("Training vectorstore loaded successfully for verbose mode")
+                except Exception as e:
+                    logger.error(f"Error loading training vectorstore for verbose mode: {str(e)}")
+                    # Continue without training data
         
         # Check if this is a ZIP file analysis with selected integrations
         if integrations:
@@ -592,7 +656,7 @@ async def analyze_file_with_format(
             # Initialize LLM
             llm = Ollama(
                 base_url="http://ollama:11434", 
-                model="mistral"
+                model=DEFAULT_LLM_MODEL  # Use the configurable model instead of hard-coded "mistral"
             )
             
             # Process each selected integration file and generate documentation
@@ -663,6 +727,9 @@ async def analyze_file_with_format(
                     
                     # Generate component structure description
                     component_descriptions = []
+                    connection_details = []
+                    execution_order = []
+                    
                     if flow_analysis and "components" in flow_analysis:
                         # Sort components by order
                         components = sorted(
@@ -670,44 +737,225 @@ async def analyze_file_with_format(
                             key=lambda x: float(x["order"]) if x["order"] is not None else float('inf')
                         )
                         
+                        # First, gather all connection details for easier reference
                         for component in components:
-                            component_desc = f"- {component['name']}"
-                            if component["order"]:
-                                component_desc += f" (Order: {component['order']})"
-                            if component["description"]:
-                                component_desc += f": {component['description']}"
+                            if component.get("connection_name"):
+                                connection_details.append(f"{component['name']} uses the connection \"{component.get('connection_name')}\"")
+                                
+                                # Add queue name for RabbitMQ/AMQP components
+                                if component.get("queue_name"):
+                                    connection_details[-1] += f" and listens on queue \"{component.get('queue_name')}\""
+                        
+                        # First, identify parent components (like fork-joins)
+                        parent_components = {}
+                        for component in components:
+                            if component.get("sub_components") and len(component.get("sub_components", [])) > 0:
+                                parent_components[component["id"]] = {
+                                    "name": component["name"],
+                                    "type": component["type"],
+                                    "children": component.get("sub_components", [])
+                                }
+                        
+                        # Now build structured description
+                        for component in components:
+                            # Basic component info
+                            component_desc = f"- **{component['name']}**"
+                            
+                            # Add type info
+                            if component["type"] and component["type"] != "Unknown":
+                                component_desc += f" (Type: {component['type']})"
+                            
+                            # Add connection info if available
+                            if component.get("connection_name"):
+                                component_desc += f"\n  * Uses connection: **{component.get('connection_name')}**"
+                                
+                                # Add queue name for RabbitMQ/AMQP components
+                                if component.get("queue_name"):
+                                    component_desc += f"\n  * Queue name: **{component.get('queue_name')}**"
+                                
+                                # Add endpoint info for HTTP components
+                                if component.get("endpoint_url"):
+                                    component_desc += f"\n  * Endpoint: {component.get('endpoint_url')}"
+                                    if component.get("http_method"):
+                                        component_desc += f" ({component.get('http_method')})"
+                                
+                                # Add database info for DB components
+                                if component.get("database_name"):
+                                    component_desc += f"\n  * Database: {component.get('database_name')}"
+                                    if component.get("collection_name"):
+                                        component_desc += f", Collection: {component.get('collection_name')}"
+                            
+                            # Add parent info
                             if component.get("parent_id"):
                                 parent_name = next(
                                     (c["name"] for c in components if c["id"] == component["parent_id"]), 
                                     component["parent_id"]
                                 )
-                                component_desc += f" [Child of: {parent_name}]"
+                                component_desc += f"\n  * Part of: **{parent_name}**"
+                                
+                                # If parent is a fork-join, indicate which branch
+                                if component["parent_id"] in parent_components:
+                                    # Find the index of this component in the parent's children
+                                    parent = parent_components[component["parent_id"]]
+                                    if "fork" in parent["type"].lower() or "join" in parent["type"].lower() or "branch" in parent["type"].lower():
+                                        component_desc += f" (Parallel Branch)"
+                            
+                            # Add execution order info
+                            if "execution_order" in component:
+                                execution_step = f"Step {component['execution_order'] + 1}: {component['name']}"
+                                execution_order.append(execution_step)
+                            
+                            # Add description if available
+                            if component["description"]:
+                                component_desc += f"\n  * Description: {component['description']}"
+                            
                             component_descriptions.append(component_desc)
+                        
+                    # Generate connection relationships
+                    connection_flow = []
+                    if flow_analysis and "connections" in flow_analysis:
+                        for connection in flow_analysis["connections"]:
+                            connection_flow.append(f"- **{connection['from_name']}** → **{connection['to_name']}**")
+                    
+                    # Generate a more complete flow structure
+                    flow_structure = "### Components\n\n" + "\n\n".join(component_descriptions) if component_descriptions else "No component data available"
+                    
+                    if connection_details:
+                        flow_structure += "\n\n### Connections\n\n" + "\n".join(connection_details)
+                    
+                    if connection_flow:
+                        flow_structure += "\n\n### Data Flow\n\n" + "\n".join(connection_flow)
+                    
+                    if execution_order:
+                        flow_structure += "\n\n### Execution Sequence\n\n" + "\n".join(execution_order)
                     
                     # Generate documentation with a specific prompt for this integration
-                    flow_structure = "\n".join(component_descriptions) if component_descriptions else "No component data available"
+                    query = f"""Generate detailed documentation for the '{integration_name}' integration.
+
+The integration has the following structure and components:
+
+{flow_structure}
+
+Your task is to write comprehensive documentation that includes:
+
+## 1. INTRODUCTION
+Start with a clear, concise overview of what this integration does.
+
+## 2. COMPLETE FLOW DESCRIPTION
+* Identify the trigger/source that initiates this flow
+* Explain how data flows through EACH component in sequence
+* For system steps, clearly explain the logic and contents of each
+* Describe what happens at each step, being specific about connections used
+
+## 3. TECHNICAL DETAILS
+* Mention specific connection names and plugs if applicable
+* Include queue names, endpoints, or database details where available
+* Explain what data transformations occur at each step
+
+Format your response as a professional technical document with clear sections, numbered headers (## 1., ## 2., etc.), bullet points (using * for items), and concise language.
+IMPORTANT: Be specific and detailed about each component and how they connect - don't just provide a generic overview.
+"""
                     
-                    query = f"""Document this integration called '{integration_name}'. 
+                    # If verbose mode is enabled, get similar training examples
+                    training_examples = []
+                    similar_scores = []
+                    if verbose and training_vectorstore:
+                        try:
+                            logger.info(f"Verbose mode enabled, retrieving similar training examples")
+                            
+                            # Create a JSON representation of the current integration
+                            integration_json = json.dumps(flow_json)
+                            
+                            # Retrieve similar documents from training data
+                            similar_docs = training_vectorstore.similarity_search_with_score(
+                                integration_json,
+                                k=3  # Get top 3 similar examples
+                            )
+                            
+                            # Process the similar documents
+                            for doc, score in similar_docs:
+                                # The score from Chroma is a distance, lower is better
+                                # Convert to similarity score (0-100%)
+                                # Adjust formula to better handle Chroma's distance metric
+                                adjusted_score = max(0, 1.0 - score)  # First invert so higher is better
+                                similarity_score = int(adjusted_score * 100)  # Convert to percentage
+                                
+                                # Boost similarity scores to be more intuitive for users
+                                # Map the range of typical scores to a more useful range
+                                if similarity_score > 0:
+                                    # Apply a logarithmic scaling to better differentiate similar examples
+                                    # This makes small differences more visible in the UI
+                                    # Boost low scores to ensure visibility
+                                    similarity_score = max(40, min(95, int(similarity_score * 2.0)))
+                                
+                                # Get the expected documentation from metadata
+                                expected_doc = doc.metadata.get("expected_documentation", "No documentation available")
+
+                                # Add highlighting to the preview text regardless of similarity score
+                                # This ensures we always see highlighted content for debugging
+                                doc_preview = expected_doc[:200] + "..." if len(expected_doc) > 200 else expected_doc
+                                
+                                # Always apply highlighting for better visibility during debugging
+                                doc_preview = f'<mark class="highlight-similar">{doc_preview}</mark>'
+                                
+                                # Get title/name if available
+                                title = doc.metadata.get("title", "Unknown Example")
+                                
+                                # Log the details of this match for debugging
+                                logger.info(f"Training match: {title}, Original score: {score}, Adjusted: {similarity_score}%")
+                                logger.info(f"Preview content: {doc_preview[:50]}...")
+                                
+                                training_examples.append({
+                                    "title": title,
+                                    "preview": doc_preview,
+                                    "similarity": similarity_score
+                                })
+                                similar_scores.append(similarity_score)
+                            
+                            logger.info(f"Found {len(training_examples)} similar training examples with scores: {similar_scores}")
+                        except Exception as e:
+                            logger.error(f"Error retrieving similar training examples: {str(e)}")
+                            logger.error(traceback.format_exc())
                     
-                    The integration flow structure is as follows:
-                    {flow_structure}
-                    
-                    Explain what this integration does in simple terms, including:
-                    1. The source systems and how data enters the flow
-                    2. The flow of data through components, especially any branching or transformation logic
-                    3. The target systems where data is sent
-                    4. Any business purpose this integration serves
-                    
-                    Be specific about what data fields are mapped, and any routing or conditional logic."""
-                    
+                    # Call the LLM for documentation generation
                     result = qa_chain.invoke(query)["result"]
                     
                     # Add to the documentation collection
-                    all_docs.append({
+                    doc_info = {
                         "name": integration_name,
                         "documentation": result,
                         "flow_structure": flow_structure
-                    })
+                    }
+                    
+                    # If verbose mode is on and we have training examples, add them
+                    if verbose and training_examples:
+                        doc_info["training_examples"] = training_examples
+                        
+                        # Calculate overall confidence based on similarity scores
+                        if similar_scores:
+                            # Calculate a weighted average confidence score
+                            weighted_sum = 0
+                            weights = 0
+                            
+                            # Give higher weight to higher similarity scores
+                            for i, score in enumerate(similar_scores):
+                                weight = 1.0 if i == 0 else 0.5  # First example has full weight
+                                weighted_sum += score * weight
+                                weights += weight
+                            
+                            # Calculate confidence as weighted average adjusted by number of examples
+                            avg_similarity = weighted_sum / weights if weights > 0 else 0
+                            confidence_boost = min(1.0, len(similar_scores) / 3.0)  # More examples = higher confidence
+                            confidence = avg_similarity * confidence_boost
+                            
+                            # Ensure confidence is between 0-100 and is an integer
+                            doc_info["confidence"] = max(1, min(100, int(confidence)))
+                            logger.info(f"Calculated confidence score: {doc_info['confidence']}% from {len(similar_scores)} examples")
+                        else:
+                            doc_info["confidence"] = 0
+                            logger.info("No similar examples found, confidence score is 0%")
+                    
+                    all_docs.append(doc_info)
                 except Exception as e:
                     logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
                     if attempt == max_retries - 1:
@@ -733,7 +981,11 @@ async def analyze_file_with_format(
             if output_format == OutputFormat.html:
                 # Convert markdown to HTML for display
                 html_doc = markdown.markdown(combined_doc)
-                return {"documentation": html_doc, "format": "html"}
+                return {
+                    "documentation": html_doc, 
+                    "format": "html",
+                    "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
+                }
             
             elif output_format == OutputFormat.markdown:
                 # Save the markdown content
@@ -749,7 +1001,8 @@ async def analyze_file_with_format(
                     "documentation": combined_doc,
                     "format": "markdown",
                     "filename": md_filename,
-                    "download_url": f"/download/{md_filename}"
+                    "download_url": f"/download/{md_filename}",
+                    "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
                 }
             
             elif output_format == OutputFormat.pdf:
@@ -791,7 +1044,8 @@ async def analyze_file_with_format(
                         "documentation": markdown.markdown(combined_doc),
                         "format": "pdf",
                         "filename": pdf_filename,
-                        "download_url": f"/download/{pdf_filename}"
+                        "download_url": f"/download/{pdf_filename}",
+                        "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
                     }
                 except Exception as e:
                     logger.error(f"Error generating PDF: {str(e)}")
@@ -813,11 +1067,16 @@ async def analyze_file_with_format(
 async def analyze_file_with_training(
     filename: str = Form(...), 
     output_format: OutputFormat = Form(OutputFormat.html),
-    integrations: Optional[str] = Form(None)
+    integrations: Optional[str] = Form(None),
+    verbose: Optional[bool] = Form(False)
 ):
-    """Generate documentation using training data for improved accuracy"""
+    """Generate documentation using training data for improved accuracy.
+    
+    When verbose is True, additional information about the training examples used and
+    confidence scores will be included in the documentation.
+    """
     try:
-        logger.info(f"Starting smart analysis of file: {filename} with output format: {output_format}")
+        logger.info(f"Starting smart analysis of file: {filename} with output format: {output_format}, verbose mode: {verbose}")
 
         # Initialize embeddings
         embeddings = OllamaEmbeddings(
@@ -972,7 +1231,7 @@ async def analyze_file_with_training(
             # Initialize LLM
             llm = Ollama(
                 base_url="http://ollama:11434", 
-                model="mistral"
+                model=DEFAULT_LLM_MODEL  # Use the configurable model instead of hard-coded "mistral"
             )
             
             # Process each selected integration file and generate documentation
@@ -1043,6 +1302,9 @@ async def analyze_file_with_training(
                     
                     # Generate component structure description
                     component_descriptions = []
+                    connection_details = []
+                    execution_order = []
+                    
                     if flow_analysis and "components" in flow_analysis:
                         # Sort components by order
                         components = sorted(
@@ -1050,44 +1312,225 @@ async def analyze_file_with_training(
                             key=lambda x: float(x["order"]) if x["order"] is not None else float('inf')
                         )
                         
+                        # First, gather all connection details for easier reference
                         for component in components:
-                            component_desc = f"- {component['name']}"
-                            if component["order"]:
-                                component_desc += f" (Order: {component['order']})"
-                            if component["description"]:
-                                component_desc += f": {component['description']}"
+                            if component.get("connection_name"):
+                                connection_details.append(f"{component['name']} uses the connection \"{component.get('connection_name')}\"")
+                                
+                                # Add queue name for RabbitMQ/AMQP components
+                                if component.get("queue_name"):
+                                    connection_details[-1] += f" and listens on queue \"{component.get('queue_name')}\""
+                        
+                        # First, identify parent components (like fork-joins)
+                        parent_components = {}
+                        for component in components:
+                            if component.get("sub_components") and len(component.get("sub_components", [])) > 0:
+                                parent_components[component["id"]] = {
+                                    "name": component["name"],
+                                    "type": component["type"],
+                                    "children": component.get("sub_components", [])
+                                }
+                        
+                        # Now build structured description
+                        for component in components:
+                            # Basic component info
+                            component_desc = f"- **{component['name']}**"
+                            
+                            # Add type info
+                            if component["type"] and component["type"] != "Unknown":
+                                component_desc += f" (Type: {component['type']})"
+                            
+                            # Add connection info if available
+                            if component.get("connection_name"):
+                                component_desc += f"\n  * Uses connection: **{component.get('connection_name')}**"
+                                
+                                # Add queue name for RabbitMQ/AMQP components
+                                if component.get("queue_name"):
+                                    component_desc += f"\n  * Queue name: **{component.get('queue_name')}**"
+                                
+                                # Add endpoint info for HTTP components
+                                if component.get("endpoint_url"):
+                                    component_desc += f"\n  * Endpoint: {component.get('endpoint_url')}"
+                                    if component.get("http_method"):
+                                        component_desc += f" ({component.get('http_method')})"
+                                
+                                # Add database info for DB components
+                                if component.get("database_name"):
+                                    component_desc += f"\n  * Database: {component.get('database_name')}"
+                                    if component.get("collection_name"):
+                                        component_desc += f", Collection: {component.get('collection_name')}"
+                            
+                            # Add parent info
                             if component.get("parent_id"):
                                 parent_name = next(
                                     (c["name"] for c in components if c["id"] == component["parent_id"]), 
                                     component["parent_id"]
                                 )
-                                component_desc += f" [Child of: {parent_name}]"
+                                component_desc += f"\n  * Part of: **{parent_name}**"
+                                
+                                # If parent is a fork-join, indicate which branch
+                                if component["parent_id"] in parent_components:
+                                    # Find the index of this component in the parent's children
+                                    parent = parent_components[component["parent_id"]]
+                                    if "fork" in parent["type"].lower() or "join" in parent["type"].lower() or "branch" in parent["type"].lower():
+                                        component_desc += f" (Parallel Branch)"
+                            
+                            # Add execution order info
+                            if "execution_order" in component:
+                                execution_step = f"Step {component['execution_order'] + 1}: {component['name']}"
+                                execution_order.append(execution_step)
+                            
+                            # Add description if available
+                            if component["description"]:
+                                component_desc += f"\n  * Description: {component['description']}"
+                            
                             component_descriptions.append(component_desc)
+                        
+                    # Generate connection relationships
+                    connection_flow = []
+                    if flow_analysis and "connections" in flow_analysis:
+                        for connection in flow_analysis["connections"]:
+                            connection_flow.append(f"- **{connection['from_name']}** → **{connection['to_name']}**")
+                    
+                    # Generate a more complete flow structure
+                    flow_structure = "### Components\n\n" + "\n\n".join(component_descriptions) if component_descriptions else "No component data available"
+                    
+                    if connection_details:
+                        flow_structure += "\n\n### Connections\n\n" + "\n".join(connection_details)
+                    
+                    if connection_flow:
+                        flow_structure += "\n\n### Data Flow\n\n" + "\n".join(connection_flow)
+                    
+                    if execution_order:
+                        flow_structure += "\n\n### Execution Sequence\n\n" + "\n".join(execution_order)
                     
                     # Generate documentation with a specific prompt for this integration
-                    flow_structure = "\n".join(component_descriptions) if component_descriptions else "No component data available"
+                    query = f"""Generate detailed documentation for the '{integration_name}' integration.
+
+The integration has the following structure and components:
+
+{flow_structure}
+
+Your task is to write comprehensive documentation that includes:
+
+## 1. INTRODUCTION
+Start with a clear, concise overview of what this integration does.
+
+## 2. COMPLETE FLOW DESCRIPTION
+* Identify the trigger/source that initiates this flow
+* Explain how data flows through EACH component in sequence
+* For system patterns, describe the data flow in detail
+* Describe what happens at each step, being specific about connections used
+
+## 3. TECHNICAL DETAILS
+* Mention specific connection names
+* Include queue names, endpoints, or database details where available
+* Explain what data transformations occur at each step
+
+Format your response as a professional technical document with clear sections, numbered headers (## 1., ## 2., etc.), bullet points (using * for items), and concise language.
+IMPORTANT: Be specific and detailed about each component and how they connect - don't just provide a generic overview.
+"""
                     
-                    query = f"""Document this integration called '{integration_name}'. 
+                    # If verbose mode is enabled, get similar training examples
+                    training_examples = []
+                    similar_scores = []
+                    if verbose and training_vectorstore:
+                        try:
+                            logger.info(f"Verbose mode enabled, retrieving similar training examples")
+                            
+                            # Create a JSON representation of the current integration
+                            integration_json = json.dumps(flow_json)
+                            
+                            # Retrieve similar documents from training data
+                            similar_docs = training_vectorstore.similarity_search_with_score(
+                                integration_json,
+                                k=3  # Get top 3 similar examples
+                            )
+                            
+                            # Process the similar documents
+                            for doc, score in similar_docs:
+                                # The score from Chroma is a distance, lower is better
+                                # Convert to similarity score (0-100%)
+                                # Adjust formula to better handle Chroma's distance metric
+                                adjusted_score = max(0, 1.0 - score)  # First invert so higher is better
+                                similarity_score = int(adjusted_score * 100)  # Convert to percentage
+                                
+                                # Boost similarity scores to be more intuitive for users
+                                # Map the range of typical scores to a more useful range
+                                if similarity_score > 0:
+                                    # Apply a logarithmic scaling to better differentiate similar examples
+                                    # This makes small differences more visible in the UI
+                                    # Boost low scores to ensure visibility
+                                    similarity_score = max(40, min(95, int(similarity_score * 2.0)))
+                                
+                                # Get the expected documentation from metadata
+                                expected_doc = doc.metadata.get("expected_documentation", "No documentation available")
+
+                                # Add highlighting to the preview text regardless of similarity score
+                                # This ensures we always see highlighted content for debugging
+                                doc_preview = expected_doc[:200] + "..." if len(expected_doc) > 200 else expected_doc
+                                
+                                # Always apply highlighting for better visibility during debugging
+                                doc_preview = f'<mark class="highlight-similar">{doc_preview}</mark>'
+                                
+                                # Get title/name if available
+                                title = doc.metadata.get("title", "Unknown Example")
+                                
+                                # Log the details of this match for debugging
+                                logger.info(f"Training match: {title}, Original score: {score}, Adjusted: {similarity_score}%")
+                                logger.info(f"Preview content: {doc_preview[:50]}...")
+                                
+                                training_examples.append({
+                                    "title": title,
+                                    "preview": doc_preview,
+                                    "similarity": similarity_score
+                                })
+                                similar_scores.append(similarity_score)
+                            
+                            logger.info(f"Found {len(training_examples)} similar training examples with scores: {similar_scores}")
+                        except Exception as e:
+                            logger.error(f"Error retrieving similar training examples: {str(e)}")
+                            logger.error(traceback.format_exc())
                     
-                    The integration flow structure is as follows:
-                    {flow_structure}
-                    
-                    Explain what this integration does in simple terms, including:
-                    1. The source systems and how data enters the flow
-                    2. The flow of data through components, especially any branching or transformation logic
-                    3. The target systems where data is sent
-                    4. Any business purpose this integration serves
-                    
-                    Be specific about what data fields are mapped, and any routing or conditional logic."""
-                    
+                    # Call the LLM for documentation generation
                     result = qa_chain.invoke(query)["result"]
                     
                     # Add to the documentation collection
-                    all_docs.append({
+                    doc_info = {
                         "name": integration_name,
                         "documentation": result,
                         "flow_structure": flow_structure
-                    })
+                    }
+                    
+                    # If verbose mode is on and we have training examples, add them
+                    if verbose and training_examples:
+                        doc_info["training_examples"] = training_examples
+                        
+                        # Calculate overall confidence based on similarity scores
+                        if similar_scores:
+                            # Calculate a weighted average confidence score
+                            weighted_sum = 0
+                            weights = 0
+                            
+                            # Give higher weight to higher similarity scores
+                            for i, score in enumerate(similar_scores):
+                                weight = 1.0 if i == 0 else 0.5  # First example has full weight
+                                weighted_sum += score * weight
+                                weights += weight
+                            
+                            # Calculate confidence as weighted average adjusted by number of examples
+                            avg_similarity = weighted_sum / weights if weights > 0 else 0
+                            confidence_boost = min(1.0, len(similar_scores) / 3.0)  # More examples = higher confidence
+                            confidence = avg_similarity * confidence_boost
+                            
+                            # Ensure confidence is between 0-100 and is an integer
+                            doc_info["confidence"] = max(1, min(100, int(confidence)))
+                            logger.info(f"Calculated confidence score: {doc_info['confidence']}% from {len(similar_scores)} examples")
+                        else:
+                            doc_info["confidence"] = 0
+                            logger.info("No similar examples found, confidence score is 0%")
+                    
+                    all_docs.append(doc_info)
                 except Exception as e:
                     logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
                     if attempt == max_retries - 1:
@@ -1113,7 +1556,11 @@ async def analyze_file_with_training(
             if output_format == OutputFormat.html:
                 # Convert markdown to HTML for display
                 html_doc = markdown.markdown(combined_doc)
-                return {"documentation": html_doc, "format": "html"}
+                return {
+                    "documentation": html_doc, 
+                    "format": "html",
+                    "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
+                }
             
             elif output_format == OutputFormat.markdown:
                 # Save the markdown content
@@ -1129,7 +1576,8 @@ async def analyze_file_with_training(
                     "documentation": combined_doc,
                     "format": "markdown",
                     "filename": md_filename,
-                    "download_url": f"/download/{md_filename}"
+                    "download_url": f"/download/{md_filename}",
+                    "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
                 }
             
             elif output_format == OutputFormat.pdf:
@@ -1171,7 +1619,8 @@ async def analyze_file_with_training(
                         "documentation": markdown.markdown(combined_doc),
                         "format": "pdf",
                         "filename": pdf_filename,
-                        "download_url": f"/download/{pdf_filename}"
+                        "download_url": f"/download/{pdf_filename}",
+                        "all_docs": all_docs if verbose else None  # Include all_docs when in verbose mode
                     }
                 except Exception as e:
                     logger.error(f"Error generating PDF: {str(e)}")
@@ -1433,7 +1882,7 @@ async def list_training_examples():
                         # Get file stats for creation time
                         file_stats = os.stat(file_path)
                         created_time = time.strftime("%Y-%m-%d %H:%M:%S", 
-                                                   time.localtime(file_stats.st_ctime))
+                        time.localtime(file_stats.st_ctime))
                         
                         # Extract integration name from filename pattern: Name_UUID.json
                         parts = example_file.split('_')
@@ -1446,7 +1895,7 @@ async def list_training_examples():
                             data = json.load(f)
                             if "documentation" in data:
                                 # Get first 100 chars of documentation as preview
-                                doc_preview = data["documentation"][:100] + "..." if len(data["documentation"]) > 100 else data["documentation"]
+                                doc_preview = data["documentation"][:100] +"..." if len(data["documentation"]) > 100 else data["documentation"]
                         
                         examples.append({
                             "id": integration_id,
@@ -1518,587 +1967,151 @@ async def delete_training_example(example_id: str):
             content={"error": f"Error deleting training example: {str(e)}"}
         )
 
-@app.post("/training/rebuild-vectorstore")
-async def rebuild_vectorstore():
-    """Rebuild the training vectorstore from existing examples"""
+@app.post("/train-with-zip")
+async def train_with_zip(
+    filename: str = Form(...),
+    integration_id: str = Form(...),
+    documentation: str = Form(...)
+):
+    """
+    Use a single integration from an uploaded ZIP file as training data.
+    Creates a structured training example that can be used to improve documentation generation.
+    """
     try:
-        if not os.path.exists("/data/langchain"):
+        logger.info(f"Processing training with integration ID: {integration_id} from ZIP file: {filename}")
+        
+        # Extract
+        upload_id = filename.split('_')[0]
+        extract_dir = f"/data/extracted/{upload_id}"
+        
+        if not os.path.exists(extract_dir):
+            logger.error(f"Extracted directory not found: {extract_dir}")
             return JSONResponse(
-                status_code=400,
-                content={"error": "No training examples found to rebuild vectorstore"}
+                status_code=404,
+                content={"error": "Extracted archive not found. Please upload the file again."}
             )
         
-        # Get list of example files
-        example_files = [f for f in os.listdir("/data/langchain") if f.endswith(".json")]
+        # Find the integration file
+        integration_files = glob.glob(f"{extract_dir}/**/services/*_{integration_id}.json", recursive=True)
         
-        if not example_files:
+        if not integration_files:
+            logger.error(f"Integration file not found for ID: {integration_id}")
             return JSONResponse(
-                status_code=400,
-                content={"error": "No training examples found to rebuild vectorstore"}
+                status_code=404,
+                content={"error": "Integration file not found in the archive. Please upload again."}
             )
         
-        # Initialize embeddings
-        embeddings = OllamaEmbeddings(
-            base_url="http://ollama:11434",
-            model="mistral"
-        )
+        integration_file = integration_files[0]
+        logger.info(f"Found integration file: {integration_file}")
         
-        # Create a fresh vectorstore directory
-        vectorstore_dir = "/data/training/vectorstore"
-        os.makedirs(vectorstore_dir, exist_ok=True)
-        
-        # Check if existing vectorstore
-        if os.path.exists(f"{vectorstore_dir}/chroma.sqlite3"):
-            # Load existing vectorstore
-            logger.info("Loading existing training vectorstore")
-            vectorstore = Chroma(
-                persist_directory=vectorstore_dir,
-                embedding_function=embeddings,
-                collection_name="training_examples"
-            )
-            # Add documents to existing vectorstore
-            vectorstore.add_documents(documents)
-        else:
-            # Create new vectorstore
-            logger.info("Creating new training vectorstore")
-            vectorstore = Chroma.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                persist_directory=vectorstore_dir,
-                collection_name="training_examples"
-            )
-        
-        # Persist changes
-        vectorstore.persist()
-        logger.info(f"Successfully added web crawl data to training vectorstore")
-        
-    except Exception as e:
-        logger.error(f"Error creating vectorstore from web crawl data: {str(e)}")
-        raise
-
-@app.post("/train/web-crawl")
-async def web_crawl_for_training(config: WebScrapingConfig):
-    """
-    Crawl a website for documentation to use as training data.
-    The content from each page will be extracted and used to train the model.
-    """
-    logger.info(f"Starting web crawl for training data from: {config.url}")
-    
-    try:
-        # Create a unique ID for this training batch
-        training_id = str(uuid.uuid4())
-        
-        # Track crawled URLs to avoid duplicates
-        crawled_urls = set()
-        crawl_results = []
-        
-        # Set up the initial URL to crawl
-        urls_to_crawl = [(config.url, 0)]  # (url, depth)
-        
-        # Start crawling
-        logger.info(f"Beginning web crawl with max depth {config.max_depth} and max pages {config.max_pages}")
-        
-        # Try to use Playwright for JavaScript-heavy sites
-        try:
-            # Use async Playwright API correctly
-            async with async_playwright() as playwright:
-                logger.info("Starting Playwright browser for web crawling")
-                browser = await playwright.chromium.launch()
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
-                )
-                page = await context.new_page()
-                
-                # Process URLs in queue
-                while urls_to_crawl and len(crawled_urls) < config.max_pages:
-                    # Get the next URL and its depth
-                    current_url, current_depth = urls_to_crawl.pop(0)
-                    
-                    # Skip if we've already crawled this URL
-                    if current_url in crawled_urls:
-                        continue
-                        
-                    logger.info(f"Crawling URL with Playwright: {current_url} (depth: {current_depth})")
-                    
-                    try:
-                        # Visit the page and wait for it to load (async)
-                        await page.goto(current_url, wait_until="networkidle", timeout=30000)
-                        
-                        # Wait for potential content to load
-                        await page.wait_for_timeout(3000)
-                        
-                        # Get the page title
-                        title = await page.title()
-                        
-                        # Get the page content
-                        content = await page.content()
-                        
-                        # Parse with BeautifulSoup
-                        soup = BeautifulSoup(content, 'html.parser')
-                        
-                        # First try to extract content using standard methods
-                        main_content = extract_main_content(soup)
-                        
-                        # If content is still limited, try direct text extraction from Playwright
-                        if len(main_content.strip()) < 100:
-                            logger.info("Attempting specialized extraction with Playwright selectors")
-                            
-                            # Try various selectors that might contain the main content
-                            content_selectors = [
-                                "article", 
-                                ".topic-content", 
-                                "#topic-content", 
-                                ".documentation",
-                                ".content-wrapper",
-                                ".main-content",
-                                "main",
-                                ".content",
-                                "#content"
-                            ]
-                            
-                            for selector in content_selectors:
-                                try:
-                                    elements = await page.query_selector_all(selector)
-                                    if elements:
-                                        extracted_texts = []
-                                        for element in elements:
-                                            text = await element.inner_text()
-                                            if text and len(text.strip()) > 50:
-                                                extracted_texts.append(text)
-                                        
-                                        if extracted_texts:
-                                            combined_text = "\n\n".join(extracted_texts)
-                                            if len(combined_text.strip()) > 100:
-                                                main_content = combined_text
-                                                logger.info(f"Found content using Playwright selector: {selector}")
-                                                break
-                                except Exception as e:
-                                    logger.warning(f"Error extracting with selector {selector}: {str(e)}")
-                        
-                        # Skip if no significant content was extracted
-                        if len(main_content.strip()) < 50:
-                            logger.warning(f"Skipping {current_url}: insufficient content")
-                            continue
-                        
-                        # Store the crawl result
-                        crawl_result = WebCrawlResult(
-                            title=title,
-                            url=current_url,
-                            text_content=main_content,
-                            crawled_at=time.strftime('%Y-%m-%d %H:%M:%S')
-                        )
-                        crawl_results.append(crawl_result)
-                        
-                        # Add to crawled set
-                        crawled_urls.add(current_url)
-                        
-                        # If we're not at max depth, find new links to crawl
-                        if current_depth < config.max_depth:
-                            # Find links using Playwright
-                            hrefs = []
-                            links = await page.query_selector_all('a')
-                            
-                            for link in links:
-                                try:
-                                    href = await link.get_attribute('href')
-                                    if href:
-                                        hrefs.append(href)
-                                except Exception as e:
-                                    continue
-                            
-                            # Process collected links
-                            for href in hrefs:
-                                # Normalize URL
-                                next_url = urljoin(current_url, href)
-                                
-                                # Skip URLs outside the original domain
-                                if not is_same_domain(config.url, next_url):
-                                    continue
-                                    
-                                # Skip URLs that have already been crawled or queued
-                                if next_url in crawled_urls or any(next_url == u for u, _ in urls_to_crawl):
-                                    continue
-                                
-                                # Check include/exclude patterns
-                                if should_crawl_url(next_url, config.include_patterns, config.exclude_patterns):
-                                    urls_to_crawl.append((next_url, current_depth + 1))
-                    
-                    except Exception as e:
-                        logger.error(f"Error crawling {current_url} with Playwright: {str(e)}")
-                        continue
-                
-                # Close browser (async)
-                await browser.close()
-                logger.info("Playwright browser closed")
-        
-        except Exception as e:
-            logger.error(f"Failed to initialize or use Playwright: {str(e)}")
-            logger.info("Falling back to requests-based crawling")
-            
-            # Fallback to simple requests-based crawling
-            while urls_to_crawl and len(crawled_urls) < config.max_pages:
-                # Get the next URL and its depth
-                current_url, current_depth = urls_to_crawl.pop(0)
-                
-                # Skip if we've already crawled this URL
-                if current_url in crawled_urls:
-                    continue
-                    
-                logger.info(f"Crawling URL with requests: {current_url} (depth: {current_depth})")
-                
-                try:
-                    # Make the request with headers to look more like a browser
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                        'Referer': 'https://www.google.com/',
-                        'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
-                        'Cache-Control': 'max-age=0'
-                    }
-                    
-                    response = requests.get(current_url, headers=headers, timeout=30)
-                    
-                    # Skip if not successful
-                    if response.status_code != 200:
-                        logger.warning(f"Failed to fetch {current_url}: status code {response.status_code}")
-                        continue
-                        
-                    # Parse the HTML
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    title = soup.title.string if soup.title else "No Title"
-                    
-                    # Extract the content
-                    main_content = extract_main_content(soup)
-                    
-                    # Skip if no significant content was extracted
-                    if len(main_content.strip()) < 50:
-                        logger.warning(f"Skipping {current_url}: insufficient content")
-                        continue
-                    
-                    # Store the crawl result
-                    crawl_result = WebCrawlResult(
-                        title=title,
-                        url=current_url,
-                        text_content=main_content,
-                        crawled_at=time.strftime('%Y-%m-%d %H:%M:%S')
-                    )
-                    crawl_results.append(crawl_result)
-                    
-                    # Add to crawled set
-                    crawled_urls.add(current_url)
-                    
-                    # If we're not at max depth, find new links to crawl
-                    if current_depth < config.max_depth:
-                        # Find all links
-                        links = soup.find_all('a', href=True)
-                        
-                        for link in links:
-                            # Normalize URL
-                            next_url = urljoin(current_url, link['href'])
-                            
-                            # Skip URLs outside the original domain
-                            if not is_same_domain(config.url, next_url):
-                                continue
-                                
-                            # Skip URLs that have already been crawled or queued
-                            if next_url in crawled_urls or any(next_url == u for u, _ in urls_to_crawl):
-                                continue
-                                
-                            # Check include/exclude patterns
-                            if should_crawl_url(next_url, config.include_patterns, config.exclude_patterns):
-                                urls_to_crawl.append((next_url, current_depth + 1))
-                                
-                except Exception as e:
-                    logger.error(f"Error crawling {current_url}: {str(e)}")
-                    continue
-        
-        # Process and save the crawled content as training data
-        if crawl_results:
-            logger.info(f"Successfully crawled {len(crawl_results)} pages")
-            
-            try:
-                # Create training directory if it doesn't exist
-                os.makedirs("/data/training/web", exist_ok=True)
-                
-                # Save all crawled content to a single file
-                training_data_path = f"/data/training/web/web_training_{training_id}.json"
-                
-                # Convert crawl results to training data
-                training_data = {
-                    "title": config.title,
-                    "source_url": config.url,
-                    "crawled_at": time.strftime('%Y-%m-%d %H:%M:%S'),
-                    "pages": [
-                        {
-                            "url": result.url,
-                            "title": result.title,
-                            "content": result.text_content
-                        }
-                        for result in crawl_results
-                    ]
-                }
-                
-                with open(training_data_path, "w") as f:
-                    json.dump(training_data, f, indent=2)
-                
-                # Add to vector store
-                create_vectorstore_from_web_crawl(training_data_path, training_id)
-                
-                # Return success with stats
-                return WebCrawlBatchResult(
-                    title=config.title,
-                    pages_crawled=len(crawl_results),
-                    urls=[result.url for result in crawl_results],
-                    training_id=training_id
-                )
-                
-            except Exception as e:
-                logger.error(f"Error processing crawled data: {str(e)}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error processing crawled data: {str(e)}"
-                )
-        else:
-            logger.warning("No pages were successfully crawled")
-            return JSONResponse(
-                status_code=400,
-                content={"error": "No pages were successfully crawled. Check the URL and crawling patterns."}
-            )
-    
-    except Exception as e:
-        logger.error(f"Web crawling error: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=500,
-            detail=f"Web crawling error: {str(e)}"
-        )
-
-def extract_main_content(soup):
-    """Extract the main content from a BeautifulSoup object."""
-    # Remove script and style elements
-    for element in soup(['script', 'style']):
-        element.extract()
-    
-    # Try to find main content areas with more potential selectors
-    main_content = soup.find('main') or soup.find(id='content') or soup.find(id='topic-content') or \
-                  soup.find(class_='content') or soup.find('article') or soup.find(class_='article-content') or \
-                  soup.find(class_='portal-body') or soup.find(class_='documentation')
-    
-    # If we found a main content area, use it
-    if main_content:
-        # Convert to text
-        h = html2text.HTML2Text()
-        h.ignore_links = False
-        h.ignore_images = True
-        return h.handle(str(main_content))
-    else:
-        # Fall back to the body
-        h = html2text.HTML2Text()
-        h.ignore_links = False
-        h.ignore_images = True
-        return h.handle(str(soup.body)) if soup.body else ""
-
-def flatten_json(json_data, prefix=''):
-    """
-    Flatten a nested JSON structure into a flat dictionary.
-    """
-    flattened = {}
-    
-    if isinstance(json_data, dict):
-        for key, value in json_data.items():
-            new_key = f"{prefix}{key}" if prefix else key
-            if isinstance(value, (dict, list)):
-                flattened.update(flatten_json(value, f"{new_key}_"))
-            else:
-                flattened[new_key] = value
-    elif isinstance(json_data, list):
-        for i, item in enumerate(json_data):
-            flattened.update(flatten_json(item, f"{prefix}{i}_"))
-    else:
-        flattened[prefix.rstrip('_')] = json_data
-    
-    return flattened
-
-def analyze_integration_flow(integration_id, extract_dir):
-    """
-    Analyze the flow structure of an integration, extracting information about components,
-    their relationships, and other metadata that's useful for documentation.
-    
-    Args:
-        integration_id: The UUID of the integration to analyze
-        extract_dir: The directory containing the extracted project files
-    
-    Returns:
-        A dictionary containing analysis of the integration flow
-    """
-    logger.info(f"Analyzing integration flow for: {integration_id}")
-    
-    # Find the integration JSON file
-    integration_files = glob.glob(f"{extract_dir}/**/services/*_{integration_id}.json", recursive=True)
-    
-    if not integration_files:
-        logger.warning(f"Integration file for ID {integration_id} not found")
-        return None
-    
-    integration_file = integration_files[0]
-    
-    try:
         # Load the integration JSON
         with open(integration_file, 'r') as f:
-            integration_data = json.load(f)
+            integration_json = json.load(f)
         
-        # Extract basic information
-        flow_info = {
-            "id": integration_data.get("id", ""),
-            "name": integration_data.get("name", ""),
-            "description": integration_data.get("description", ""),
-            "components": []
+        # Extract integration name
+        integration_name = integration_json.get("name", f"Integration_{integration_id}")
+        
+        # IMPROVED: Analyze the integration flow to get comprehensive information
+        # This matches what the smart documentation does, making the training example more complete
+        flow_analysis = analyze_integration_flow(integration_id, extract_dir)
+        
+        # IMPROVED: Create an enriched integration JSON that includes flow analysis
+        # This better matches what will be used during smart documentation generation
+        enriched_integration_json = {
+            "basic_data": integration_json,
+            "flow_analysis": flow_analysis
         }
         
-        # Find all component configurations that are used in this integration
-        component_ids = []
+        # Create a training example with the enriched JSON
+        training_example = {
+            "integration_json": enriched_integration_json,
+            "documentation": documentation
+        }
         
-        # Extract component IDs from the integration data
-        if "components" in integration_data:
-            for component in integration_data["components"]:
-                component_ids.append(component.get("id", ""))
+        # Save to JSON file in langchain directory with proper naming
+        os.makedirs("/data/langchain", exist_ok=True)
+        training_file = f"/data/langchain/{integration_name}_{integration_id}.json"
         
-        # Find component configuration files
-        components = []
-        for component_id in component_ids:
-            if not component_id:
-                continue
-                
-            component_files = glob.glob(f"{extract_dir}/**/component_configs/{component_id}.json", recursive=True)
+        with open(training_file, "w") as f:
+            json.dump(training_example, f, indent=2)
+        
+        logger.info(f"Saved training example to {training_file}")
+        
+        # Also save markdown version for easy reference
+        markdown_file = f"/data/langchain/{integration_name}_{integration_id}.md"
+        with open(markdown_file, "w") as f:
+            f.write(f"# {integration_name} Documentation\n\n")
+            f.write(documentation)
+        
+        logger.info(f"Saved training markdown to {markdown_file}")
+        
+        # Add to vector store for training
+        try:
+            # Initialize embeddings
+            embeddings = OllamaEmbeddings(
+                base_url="http://ollama:11434",
+                model="mistral"
+            )
             
-            if component_files:
-                with open(component_files[0], 'r') as f:
-                    component_data = json.load(f)
-                    components.append(component_data)
-        
-        # Process each component to extract useful information
-        for component in components:
-            component_info = {
-                "id": component.get("id", ""),
-                "name": component.get("name", ""),
-                "description": component.get("description", ""),
-                "type": component.get("type", ""),
-                "parent_id": component.get("parentId", None),
-                "order": None,
-                "properties": {}
-            }
+            # Create document with metadata
+            # IMPROVED: Use the same enriched JSON representation for vector embedding
+            # that will be used during smart documentation
+            doc = Document(
+                page_content=json.dumps(enriched_integration_json),
+                metadata={
+                    "expected_documentation": documentation,
+                    "integration_name": integration_name,
+                    "integration_id": integration_id,
+                    "title": f"{integration_name}_{integration_id}"
+                }
+            )
             
-            # Extract component properties
-            if "properties" in component:
-                for prop_name, prop_value in component["properties"].items():
-                    # Only include non-complex properties or those useful for documentation
-                    if isinstance(prop_value, (str, int, float, bool)) or prop_name in [
-                        "httpMethod", "url", "path", "expression", "inputFormat", "outputFormat",
-                        "targetField", "conditions", "mappings", "query", "queryParams"
-                    ]:
-                        component_info["properties"][prop_name] = prop_value
+            # Create or update vectorstore
+            vectorstore_dir = "/data/training/vectorstore"
+            os.makedirs(vectorstore_dir, exist_ok=True)
             
-            flow_info["components"].append(component_info)
+            # Check if existing vectorstore
+            if os.path.exists(f"{vectorstore_dir}/chroma.sqlite3"):
+                # Load existing vectorstore
+                logger.info("Loading existing training vectorstore")
+                vectorstore = Chroma(
+                    persist_directory=vectorstore_dir,
+                    embedding_function=embeddings,
+                    collection_name="training_examples"
+                )
+                # Add document to existing vectorstore
+                vectorstore.add_documents([doc])
+            else:
+                # Create new vectorstore
+                logger.info("Creating new training vectorstore")
+                vectorstore = Chroma.from_documents(
+                    documents=[doc],
+                    embedding=embeddings,
+                    persist_directory=vectorstore_dir,
+                    collection_name="training_examples"
+                )
+            
+            # Persist changes
+            vectorstore.persist()
+            logger.info("Added training example to vectorstore")
+            
+        except Exception as e:
+            logger.error(f"Error adding to vectorstore: {str(e)}")
+            # Continue anyway, as we've saved the files
         
-        # Determine component order if possible
-        # This is often defined in the integration JSON rather than component configs
-        if "flows" in integration_data:
-            for flow in integration_data["flows"]:
-                if "nodes" in flow:
-                    for node in flow["nodes"]:
-                        node_id = node.get("componentId", "")
-                        node_order = node.get("order", None)
-                        
-                        # Update the order in our component info
-                        for component in flow_info["components"]:
-                            if component["id"] == node_id:
-                                component["order"] = node_order
-                                break
-        
-        # Extract data mappings between components
-        if "mappings" in integration_data:
-            flow_info["mappings"] = integration_data["mappings"]
-        
-        # Look for API definitions if this integration uses API endpoints
-        api_ids = set()
-        for component in flow_info["components"]:
-            if component["type"] in ["apiEventSource", "apiInvoker", "apiEventEmitter"]:
-                if "properties" in component and "apiId" in component["properties"]:
-                    api_ids.add(component["properties"]["apiId"])
-        
-        # Get API details if available
-        if api_ids:
-            flow_info["apis"] = []
-            for api_id in api_ids:
-                api_files = glob.glob(f"{extract_dir}/**/apis/*_{api_id}.json", recursive=True)
-                
-                if api_files:
-                    with open(api_files[0], 'r') as f:
-                        api_data = json.load(f)
-                        
-                        # Extract key API information
-                        api_info = {
-                            "id": api_data.get("id", ""),
-                            "name": api_data.get("name", ""),
-                            "description": api_data.get("description", ""),
-                            "endpoints": []
-                        }
-                        
-                        # Extract endpoint information
-                        if "paths" in api_data:
-                            for path, methods in api_data["paths"].items():
-                                for method, details in methods.items():
-                                    endpoint_info = {
-                                        "path": path,
-                                        "method": method.upper(),
-                                        "summary": details.get("summary", ""),
-                                        "description": details.get("description", "")
-                                    }
-                                    api_info["endpoints"].append(endpoint_info)
-                        
-                        flow_info["apis"].append(api_info)
-        
-        return flow_info
+        return {
+            "message": f"Successfully added training example for {integration_name}",
+            "integration_name": integration_name,
+            "integration_id": integration_id,
+            "training_file": os.path.basename(training_file)
+        }
         
     except Exception as e:
-        logger.error(f"Error analyzing integration flow: {str(e)}")
-        return None
-
-@app.post("/upload-image")
-async def upload_image(file: UploadFile = File(...)):
-    """
-    Upload an image file for analysis.
-    Returns the file path for further processing.
-    """
-    try:
-        logger.info(f"Receiving image file: {file.filename}")
-        
-        # Generate a unique ID for this upload
-        upload_id = str(uuid.uuid4())
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        image_filename = f"{upload_id}{file_extension}"
-        image_path = f"/data/uploads/{image_filename}"
-        
-        # Save the uploaded image file
-        content = await file.read()
-        with open(image_path, "wb") as f:
-            f.write(content)
-        
-        logger.info(f"Image file saved to {image_path}")
-        
-        return ImageUploadResponse(
-            filename=file.filename,
-            file_path=image_path,
-            message="Image uploaded successfully"
-        )
-    except Exception as e:
-        logger.error(f"Error processing image file: {str(e)}")
-        raise HTTPException(
+        logger.error(f"Error in train-with-zip: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
             status_code=500,
-            detail=f"Error processing image file: {str(e)}"
+            content={"error": f"Error processing training data: {str(e)}"}
         )
 
 @app.post("/analyze-image")
@@ -2264,6 +2277,7 @@ Format your response as structured markdown with headings and bullet points.
                         # Save the markdown content
                         md_filename = f"{base_filename}_integration_doc.md"
                         md_filepath = f"/data/{md_filename}"
+                        
                         with open(md_filepath, "w") as f:
                             f.write(f"# Integration Flow Documentation: {base_filename}\n\n{analysis_text}")
                         
@@ -2288,6 +2302,8 @@ Format your response as structured markdown with headings and bullet points.
                             <style>
                                 body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }}
                                 h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                                h2 {{ color: #3498db; margin-top: 30px; }}
+                                h3 {{ color: #2980b9; }}
                                 .content {{ margin-top: 20px; }}
                                 .image-container {{ text-align: center; margin-bottom: 20px; }}
                                 img {{ max-width: 100%; max-height: 500px; border: 1px solid #ddd; }}
@@ -2489,11 +2505,865 @@ async def create_vectorstore_from_web_crawl(training_data_path, training_id):
         
         # Persist changes
         vectorstore.persist()
-        logger.info(f"Successfully added web crawl data to training vectorstore")
         
     except Exception as e:
         logger.error(f"Error creating vectorstore from web crawl data: {str(e)}")
         raise
+
+@app.post("/train/web-crawl")
+async def web_crawl_for_training(config: WebScrapingConfig):
+    """
+    Crawl a website for documentation to use as training data.
+    The content from each page will be extracted and used to train the model.
+    """
+    logger.info(f"Starting web crawl for training data from: {config.url}")
+    
+    try:
+        # Create a unique ID for this training batch
+        training_id = str(uuid.uuid4())
+        
+        # Track crawled URLs to avoid duplicates
+        crawled_urls = set()
+        crawl_results = []
+        
+        # Set up the initial URL to crawl
+        urls_to_crawl = [(config.url, 0)]  # (url, depth)
+        
+        # Start crawling
+        logger.info(f"Beginning web crawl with max depth {config.max_depth} and max pages {config.max_pages}")
+        
+        # Try to use Playwright for JavaScript-heavy sites
+        try:
+            # Use async Playwright API correctly
+            async with async_playwright() as playwright:
+                logger.info("Starting Playwright browser for web crawling")
+                browser = await playwright.chromium.launch()
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+                )
+                page = await context.new_page()
+                
+                # Process URLs in queue
+                while urls_to_crawl and len(crawled_urls) < config.max_pages:
+                    # Get the next URL and its depth
+                    current_url, current_depth = urls_to_crawl.pop(0)
+                    
+                    # Skip if we've already crawled this URL
+                    if current_url in crawled_urls:
+                        continue
+                        
+                    logger.info(f"Crawling URL with Playwright: {current_url} (depth: {current_depth})")
+                    
+                    try:
+                        # Visit the page and wait for it to load (async)
+                        await page.goto(current_url, wait_until="networkidle", timeout=30000)
+                        
+                        # Wait for potential content to load
+                        await page.wait_for_timeout(3000)
+                        
+                        # Get the page title
+                        title = await page.title()
+                        
+                        # Get the page content
+                        content = await page.content()
+                        
+                        # Parse with BeautifulSoup
+                        soup = BeautifulSoup(content, 'html.parser')
+                        
+                        # First try to extract content using standard methods
+                        main_content = extract_main_content(soup)
+                        
+                        # If content is still limited, try direct text extraction from Playwright
+                        if len(main_content.strip()) < 100:
+                            logger.info("Attempting specialized extraction with Playwright selectors")
+                            
+                            # Try various selectors that might contain the main content
+                            content_selectors = [
+                                "article", 
+                                ".topic-content", 
+                                "#topic-content", 
+                                ".documentation",
+                                ".content-wrapper",
+                                ".main-content",
+                                "main",
+                                ".content",
+                                "#content"
+                            ]
+                            
+                            for selector in content_selectors:
+                                try:
+                                    elements = await page.query_selector_all(selector)
+                                    if elements:
+                                        extracted_texts = []
+                                        for element in elements:
+                                            text = await element.inner_text()
+                                            if text and len(text.strip()) > 50:
+                                                extracted_texts.append(text)
+                                        
+                                        if extracted_texts:
+                                            combined_text = "\n\n".join(extracted_texts)
+                                            if len(combined_text.strip()) > 100:
+                                                main_content = combined_text
+                                                logger.info(f"Found content using Playwright selector: {selector}")
+                                                break
+                                except Exception as e:
+                                    logger.warning(f"Error extracting with selector {selector}: {str(e)}")
+                        
+                        # Skip if no significant content was extracted
+                        if len(main_content.strip()) < 50:
+                            logger.warning(f"Skipping {current_url}: insufficient content")
+                            continue
+                        
+                        # Store the crawl result
+                        crawl_result = WebCrawlResult(
+                            title=title,
+                            url=current_url,
+                            text_content=main_content,
+                            crawled_at=time.strftime('%Y-%m-%d %H:%M:%S')
+                        )
+                        crawl_results.append(crawl_result)
+                        
+                        # Add to crawled set
+                        crawled_urls.add(current_url)
+                        
+                        # If we're not at max depth, find new links to crawl
+                        if current_depth < config.max_depth:
+                            # Find links using Playwright
+                            hrefs = []
+                            links = await page.query_selector_all('a')
+                            
+                            for link in links:
+                                try:
+                                    href = await link.get_attribute('href')
+                                    if href:
+                                        hrefs.append(href)
+                                except Exception as e:
+                                    logger.warning(f"Error extracting href: {str(e)}")
+                            
+                            # Process collected links
+                            for href in hrefs:
+                                # Normalize URL
+                                next_url = urljoin(current_url, href)
+                                
+                                # Skip URLs outside the original domain
+                                if not is_same_domain(config.url, next_url):
+                                    continue
+                                    
+                                # Skip URLs that have already been crawled or queued
+                                if next_url in crawled_urls or any(next_url == u for u, _ in urls_to_crawl):
+                                    continue
+                                
+                                # Check include/exclude patterns
+                                if should_crawl_url(next_url, config.include_patterns, config.exclude_patterns):
+                                    urls_to_crawl.append((next_url, current_depth + 1))
+                    
+                    except Exception as e:
+                        logger.error(f"Error crawling {current_url} with Playwright: {str(e)}")
+                        continue
+                
+                # Close browser (async)
+                await browser.close()
+                logger.info("Playwright browser closed")
+        
+        except Exception as e:
+            logger.error(f"Failed to initialize or use Playwright: {str(e)}")
+            logger.info("Falling back to requests-based crawling")
+            
+            # Fallback to simple requests-based crawling
+            while urls_to_crawl and len(crawled_urls) < config.max_pages:
+                # Get the next URL and its depth
+                current_url, current_depth = urls_to_crawl.pop(0)
+                
+                # Skip if we've already crawled this URL
+                if current_url in crawled_urls:
+                    continue
+                    
+                logger.info(f"Crawling URL with requests: {current_url} (depth: {current_depth})")
+                
+                try:
+                    # Make the request with headers to look more like a browser
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Referer': 'https://www.google.com/',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Cache-Control': 'max-age=0'
+                    }
+                    
+                    response = requests.get(current_url, headers=headers, timeout=30)
+                    
+                    # Skip if not successful
+                    if response.status_code != 200:
+                        logger.warning(f"Failed to fetch {current_url}: status code {response.status_code}")
+                        continue
+                        
+                    # Parse the HTML
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    title = soup.title.string if soup.title else "No Title"
+                    
+                    # Extract the content
+                    main_content = extract_main_content(soup)
+                    
+                    # Skip if no significant content was extracted
+                    if len(main_content.strip()) < 50:
+                        logger.warning(f"Skipping {current_url}: insufficient content")
+                        continue
+                    
+                    # Store the crawl result
+                    crawl_result = WebCrawlResult(
+                        title=title,
+                        url=current_url,
+                        text_content=main_content,
+                        crawled_at=time.strftime('%Y-%m-%d %H:%M:%S')
+                    )
+                    crawl_results.append(crawl_result)
+                    
+                    # Add to crawled set
+                    crawled_urls.add(current_url)
+                    
+                    # If we're not at max depth, find new links to crawl
+                    if current_depth < config.max_depth:
+                        # Find all links
+                        links = soup.find_all('a', href=True)
+                        
+                        for link in links:
+                            # Normalize URL
+                            next_url = urljoin(current_url, link['href'])
+                            
+                            # Skip URLs outside the original domain
+                            if not is_same_domain(config.url, next_url):
+                                continue
+                                
+                            # Skip URLs that have already been crawled or queued
+                            if next_url in crawled_urls or any(next_url == u for u, _ in urls_to_crawl):
+                                continue
+                                
+                            # Check include/exclude patterns
+                            if should_crawl_url(next_url, config.include_patterns, config.exclude_patterns):
+                                urls_to_crawl.append((next_url, current_depth + 1))
+                                
+                except Exception as e:
+                    logger.error(f"Error crawling {current_url}: {str(e)}")
+                    continue
+        
+        # Process and save the crawled content as training data
+        if crawl_results:
+            logger.info(f"Successfully crawled {len(crawl_results)} pages")
+            
+            try:
+                # Create training directory if it doesn't exist
+                os.makedirs("/data/training/web", exist_ok=True)
+                
+                # Save all crawled content to a single file
+                training_data_path = f"/data/training/web/web_training_{training_id}.json"
+                
+                # Convert crawl results to training data
+                training_data = {
+                    "title": config.title,
+                    "source_url": config.url,
+                    "crawled_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "pages": [
+                        {
+                            "url": result.url,
+                            "title": result.title,
+                            "content": result.text_content
+                        }
+                        for result in crawl_results
+                    ]
+                }
+                
+                with open(training_data_path, "w") as f:
+                    json.dump(training_data, f, indent=2)
+                
+                # IMPROVED: Use the same enriched training approach as in train-with-zip
+                # Create structured training data
+                for i, page in enumerate(training_data["pages"]):
+                    # Create a meaningful ID for this training example
+                    page_id = str(uuid.uuid4())
+                    page_title = page["title"].replace(" ", "_")[:30]
+                    
+                    # Create enriched training data with the same structure as integration JSON
+                    # This ensures consistency with our training data format
+                    enriched_training_data = {
+                        "basic_data": {
+                            "title": page["title"],
+                            "url": page["url"],
+                            "source": "web_crawl",
+                            "training_id": training_id,
+                            "type": "documentation"
+                        },
+                        "content_analysis": {
+                            "text_content": page["content"],
+                            "word_count": len(page["content"].split()),
+                            "crawled_at": training_data["crawled_at"]
+                        }
+                    }
+                    
+                    # Create a training example in the standard format
+                    page_training_example = {
+                        "integration_json": enriched_training_data,
+                        "documentation": page["content"]
+                    }
+                    
+                    # Save to JSON file in langchain directory with proper naming
+                    os.makedirs("/data/langchain", exist_ok=True)
+                    page_filename = f"WebDoc_{page_title}_{page_id}.json"
+                    page_filepath = f"/data/langchain/{page_filename}"
+                    
+                    with open(page_filepath, "w") as f:
+                        json.dump(page_training_example, f, indent=2)
+                    
+                    logger.info(f"Saved web training example to {page_filepath}")
+                
+                # Add to vector store
+                create_vectorstore_from_web_crawl(training_data_path, training_id)
+                
+                # Return success with stats
+                return WebCrawlBatchResult(
+                    title=config.title,
+                    pages_crawled=len(crawl_results),
+                    urls=[result.url for result in crawl_results],
+                    training_id=training_id
+                )
+                
+            except Exception as e:
+                logger.error(f"Error processing crawled data: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing crawled data: {str(e)}"
+                )
+        else:
+            logger.warning("No pages were successfully crawled")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No pages were successfully crawled. Check the URL and crawling patterns."}
+            )
+    
+    except Exception as e:
+        logger.error(f"Web crawling error: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Web crawling error: {str(e)}"
+        )
+
+def extract_main_content(soup):
+    """Extract the main content from a BeautifulSoup object."""
+    # Remove script and style elements
+    for element in soup(['script', 'style']):
+        element.extract()
+    
+    # Try to find main content areas with more potential selectors
+    main_content = soup.find('main') or soup.find(id='content') or soup.find(id='topic-content') or \
+                soup.find(class_='content') or soup.find('article') or soup.find(class_='article-content') or \
+                soup.find(class_='portal-body') or soup.find(class_='documentation')
+    
+    # If we found a main content area, use it
+    if main_content:
+        # Convert to text
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        return h.handle(str(main_content))
+    else:
+        # Fall back to the body
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        return h.handle(str(soup.body)) if soup.body else ""
+
+def analyze_integration_flow(integration_id, extract_dir):
+    """
+    Analyze an integration flow to extract structure and component information.
+    
+    This function examines the integration file and related files in the extract directory
+    to build a comprehensive picture of the integration flow, including components, connections,
+    and their relationships.
+    
+    Args:
+        integration_id: The UUID of the integration to analyze
+        extract_dir: Path to the directory where the ZIP was extracted
+        
+    Returns:
+        A dictionary containing flow analysis information, including components, connections, etc.
+    """
+    logger.info(f"Analyzing integration flow structure for integration ID: {integration_id}")
+    
+    try:
+        # Step 1: Find the main integration file
+        integration_files = glob.glob(f"{extract_dir}/**/services/*_{integration_id}.json", recursive=True)
+        
+        if not integration_files:
+            logger.warning(f"Integration JSON file not found for ID: {integration_id}")
+            return {"components": [], "connections": [], "properties": {}, "error": "Integration file not found"}
+        
+        integration_file = integration_files[0]
+        logger.info(f"Found integration file: {integration_file}")
+        
+        # Step 2: Load the root integration JSON
+        with open(integration_file, 'r') as f:
+            integration_json = json.load(f)
+        
+        # Extract basic integration properties
+        integration_name = integration_json.get("name", f"Integration_{integration_id}")
+        integration_type = integration_json.get("type", "UNKNOWN")
+        integration_description = integration_json.get("description", "")
+        
+        # Initialize flow analysis data structure
+        flow_analysis = {
+            "name": integration_name,
+            "id": integration_id,
+            "type": integration_type,
+            "description": integration_description,
+            "components": [],
+            "connections": [],
+            "properties": {},
+            "connection_details": []
+        }
+        
+        # Step 3: Find the project directory by searching upward from the integration file
+        integration_dir = os.path.dirname(integration_file)
+        project_root = None
+        
+        # Search upward to find the project root (should contain components, connections directories)
+        current_dir = integration_dir
+        while current_dir != extract_dir:
+            if os.path.exists(os.path.join(current_dir, "components")) or os.path.exists(os.path.join(current_dir, "connections")):
+                project_root = current_dir
+                break
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir == current_dir:  # Reached the filesystem root
+                break
+            current_dir = parent_dir
+        
+        if not project_root:
+            logger.warning(f"Could not find project root for integration {integration_id}")
+            project_root = extract_dir  # Fallback to extract directory
+        
+        logger.info(f"Using project root: {project_root}")
+        
+        # Step 4: Find and process components directory
+        components_dir = os.path.join(project_root, "components")
+        components_files = []
+        
+        if os.path.exists(components_dir):
+            # Collect all component files
+            components_files = glob.glob(f"{components_dir}/**/*.json", recursive=True)
+            logger.info(f"Found {len(components_files)} component files in {components_dir}")
+        
+        # Step 5: Find and process connections directory
+        connections_dir = os.path.join(project_root, "connections")
+        connections_files = []
+        
+        if os.path.exists(connections_dir):
+            # Collect all connection files
+            connections_files = glob.glob(f"{connections_dir}/**/*.json", recursive=True)
+            logger.info(f"Found {len(connections_files)} connection files in {connections_dir}")
+        
+        # Map to store connection details by ID for easy lookup
+        connection_map = {}
+        
+        # Process connection files to extract connection details
+        for conn_file in connections_files:
+            try:
+                with open(conn_file, 'r') as f:
+                    conn_data = json.load(f)
+                    
+                    # Extract connection ID and details
+                    conn_id = conn_data.get("id")
+                    if conn_id:
+                        connection_map[conn_id] = {
+                            "id": conn_id,
+                            "name": conn_data.get("name", "Unknown Connection"),
+                            "type": conn_data.get("type", "Unknown"),
+                            "properties": conn_data.get("properties", {}),
+                            "file_path": conn_file
+                        }
+                        
+                        # Add to flow analysis connection details
+                        flow_analysis["connection_details"].append(connection_map[conn_id])
+            except Exception as e:
+                logger.error(f"Error processing connection file {conn_file}: {str(e)}")
+        
+        # Step 6: Extract components from the integration JSON
+        if "components" in integration_json:
+            component_list = integration_json.get("components", [])
+            
+            # Process integration components
+            for component in component_list:
+                component_id = component.get("id", "")
+                component_name = component.get("name", "Unnamed Component")
+                component_type = component.get("type", "Unknown")
+                component_description = component.get("description", "")
+                component_order = component.get("order", None)
+                component_parent_id = component.get("parentId", None)
+                
+                # Enhanced component data structure
+                component_data = {
+                    "id": component_id,
+                    "name": component_name,
+                    "type": component_type,
+                    "description": component_description,
+                    "order": component_order,
+                    "parent_id": component_parent_id,
+                    "properties": component.get("properties", {}),
+                    "connection_id": component.get("connectionId", None),
+                    "connection_name": None,
+                    "sub_components": []
+                }
+                
+                # If component has a connection, look it up for more details
+                if component_data["connection_id"] and component_data["connection_id"] in connection_map:
+                    conn = connection_map[component_data["connection_id"]]
+                    component_data["connection_name"] = conn["name"]
+                    component_data["connection_type"] = conn["type"]
+                    component_data["connection_properties"] = conn["properties"]
+                
+                # Step 7: If this component has a detailed component file, load additional details
+                component_file = None
+                for cf in components_files:
+                    if f"/{component_id}.json" in cf or f"\\{component_id}.json" in cf:
+                        component_file = cf
+                        break
+                
+                if component_file:
+                    try:
+                        with open(component_file, 'r') as f:
+                            component_details = json.load(f)
+                            
+                            # Enhance component with additional details
+                            if "properties" in component_details:
+                                # Merge properties, giving precedence to detailed file
+                                detailed_props = component_details["properties"]
+                                if isinstance(detailed_props, dict):
+                                    component_data["properties"].update(detailed_props)
+                                
+                            # Check for specific component types and extract relevant details
+                            if component_type == "AMQP" or "RabbitMQ" in component_type or "Rabbit" in component_name:
+                                # Extract RabbitMQ specific details
+                                if "queue" in component_data["properties"]:
+                                    component_data["queue_name"] = component_data["properties"]["queue"]
+                                elif "queueName" in component_data["properties"]:
+                                    component_data["queue_name"] = component_data["properties"]["queueName"]
+                                
+                            elif component_type == "HTTP" or component_type == "HTTPS" or "HTTP" in component_name:
+                                # Extract HTTP client specific details
+                                if "url" in component_data["properties"]:
+                                    component_data["endpoint_url"] = component_data["properties"]["url"]
+                                if "method" in component_data["properties"]:
+                                    component_data["http_method"] = component_data["properties"]["method"]
+                                
+                            elif component_type == "MONGODB" or "Mongo" in component_name or "DB" in component_name:
+                                # Extract MongoDB specific details
+                                if "collection" in component_data["properties"]:
+                                    component_data["collection_name"] = component_data["properties"]["collection"]
+                                if "database" in component_data["properties"]:
+                                    component_data["database_name"] = component_data["properties"]["database"]
+                                if "operation" in component_data["properties"]:
+                                    component_data["operation"] = component_data["properties"]["operation"]
+                    except Exception as e:
+                        logger.error(f"Error processing component details file {component_file}: {str(e)}")
+                
+                # Add processed component to the flow analysis
+                flow_analysis["components"].append(component_data)
+        
+        # Step 8: Extract connections between components
+        if "connections" in integration_json:
+            connections = integration_json.get("connections", [])
+            
+            # Process each connection
+            for connection in connections:
+                from_id = connection.get("fromId", "")
+                to_id = connection.get("toId", "")
+                
+                # Find component names for better readability
+                from_name = next((c["name"] for c in flow_analysis["components"] if c["id"] == from_id), from_id)
+                to_name = next((c["name"] for c in flow_analysis["components"] if c["id"] == to_id), to_id)
+                
+                # Structure the connection information
+                connection_data = {
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "from_name": from_name,
+                    "to_name": to_name,
+                    "properties": connection.get("properties", {})
+                }
+                
+                # Add connection to the flow analysis
+                flow_analysis["connections"].append(connection_data)
+        
+        # Step 9: Organize components into a tree structure for fork-join patterns
+        component_map = {comp["id"]: comp for comp in flow_analysis["components"]}
+        
+        # Identify parent-child relationships
+        for comp in flow_analysis["components"]:
+            if comp["parent_id"] and comp["parent_id"] in component_map:
+                parent = component_map[comp["parent_id"]]
+                if "sub_components" not in parent:
+                    parent["sub_components"] = []
+                parent["sub_components"].append(comp["id"])
+        
+        # Step 10: Extract any global properties
+        if "properties" in integration_json:
+            flow_analysis["properties"] = integration_json["properties"]
+        
+        # Step 11: Determine execution sequence by following connections
+        # Start with components that have no incoming connections (triggers/sources)
+        incoming_connections = {conn["to_id"]: True for conn in flow_analysis["connections"]}
+        source_components = [comp for comp in flow_analysis["components"] 
+        if comp["id"] not in incoming_connections]
+        
+        # Set execution order for source components
+        for i, comp in enumerate(source_components):
+            comp["execution_order"] = i
+        
+        # Then follow connections to determine sequence
+        sequence_order = len(source_components)
+        processed = {comp["id"]: True for comp in source_components}
+        
+        # Keep processing until all components have been assigned an execution order
+        while len(processed) < len(flow_analysis["components"]):
+            progress_made = False
+            
+            for conn in flow_analysis["connections"]:
+                from_id = conn["from_id"]
+                to_id = conn["to_id"]
+                
+                # If source is processed but target is not
+                if from_id in processed and to_id not in processed and to_id in component_map:
+                    component_map[to_id]["execution_order"] = sequence_order
+                    processed[to_id] = True
+                    sequence_order += 1
+                    progress_made = True
+            
+            # If no progress was made but we haven't processed all components,
+            # there might be a cycle or disconnected components
+            if not progress_made:
+                # Assign arbitrary order to remaining components
+                for comp in flow_analysis["components"]:
+                    if comp["id"] not in processed:
+                        comp["execution_order"] = sequence_order
+                        processed[comp["id"]] = True
+                        sequence_order += 1
+        
+        # Sort components by execution order for easier understanding
+        flow_analysis["components"].sort(key=lambda x: x.get("execution_order", float('inf')))
+        
+        logger.info(f"Successfully analyzed integration flow with {len(flow_analysis['components'])} components and {len(flow_analysis['connections'])} connections")
+        return flow_analysis
+        
+    except Exception as e:
+        logger.error(f"Error analyzing integration flow: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Return a minimal structure to avoid breaking code that expects this structure
+        return {
+            "components": [], 
+            "connections": [], 
+            "properties": {}, 
+            "error": f"Error analyzing integration: {str(e)}"
+        }
+
+def flatten_json(json_obj, parent_key='', separator='_'):
+    """
+    Flattens a nested JSON object into a flat dictionary with compound keys.
+    This makes it easier to process complex nested structures.
+    
+    Args:
+        json_obj: The JSON object to flatten
+        parent_key: The parent key prefix (used for recursion)
+        separator: The separator to use between nested keys
+        
+    Returns:
+        A flattened dictionary
+    """
+    items = {}
+    
+    # Handle the case where json_obj is None
+    if json_obj is None:
+        return {}
+    
+    # Handle the case where json_obj is a list
+    if isinstance(json_obj, list):
+        # If the list is empty, just return an empty dict
+        if not json_obj:
+            return {}
+        
+        # For non-empty lists, create entries for each item
+        for i, item in enumerate(json_obj):
+            new_key = f"{parent_key}{separator}{i}" if parent_key else str(i)
+            
+            # Recursively flatten the item if it's a dict or list
+            if isinstance(item, (dict, list)):
+                items.update(flatten_json(item, new_key, separator))
+            else:
+                items[new_key] = item
+        return items
+    
+    # Handle the case where json_obj is a dict
+    if isinstance(json_obj, dict):
+        for key, value in json_obj.items():
+            new_key = f"{parent_key}{separator}{key}" if parent_key else key
+            
+            # Recursively flatten the value if it's a dict or list
+            if isinstance(value, (dict, list)):
+                items.update(flatten_json(value, new_key, separator))
+            else:
+                items[new_key] = value
+        return items
+    
+    # If json_obj is neither a dict nor list, just return it as a single item
+    items[parent_key] = json_obj
+    return items
+
+@app.post("/cleanup-vectorstores")
+async def cleanup_vectorstores():
+    """
+    Clean up old temporary vector stores to free up disk space.
+    This endpoint removes temporary vector store directories created during document generation.
+    """
+    try:
+        logger.info("Starting cleanup of temporary vector stores")
+        
+        # Get the base data directory
+        data_dir = "/data"
+        temp_pattern = "temp_vectorstore_*"
+        
+        # Find all temporary vector stores
+        temp_dirs = glob.glob(f"{data_dir}/{temp_pattern}")
+        
+        # Sort by modification time (oldest first)
+        temp_dirs.sort(key=lambda x: os.path.getmtime(x))
+        
+        if not temp_dirs:
+            logger.info("No temporary vector stores found to clean up")
+            return {"message": "No temporary vector stores found to clean up", "cleaned": 0}
+        
+        # Count of successfully removed directories
+        removed_count = 0
+        failed_dirs = []
+        
+        for temp_dir in temp_dirs:
+            try:
+                # Check if it's a directory and has the expected format
+                if os.path.isdir(temp_dir) and "temp_vectorstore_" in temp_dir:
+                    # Get the modification time for logging
+                    mod_time = os.path.getmtime(temp_dir)
+                    mod_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
+                    
+                    logger.info(f"Removing temporary vector store: {temp_dir} (modified: {mod_time_str})")
+                    
+                    # Recursively remove the directory and all contents
+                    shutil.rmtree(temp_dir)
+                    removed_count += 1
+            except Exception as e:
+                logger.error(f"Error removing directory {temp_dir}: {str(e)}")
+                failed_dirs.append({"dir": temp_dir, "error": str(e)})
+        
+        logger.info(f"Cleanup completed. Removed {removed_count} temporary vector stores")
+        
+        return {
+            "message": f"Successfully cleaned up {removed_count} temporary vector stores",
+            "cleaned": removed_count,
+            "failed": failed_dirs
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during vector store cleanup: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error during vector store cleanup: {str(e)}"}
+        )
+
+# Add API endpoint to get available models
+@app.get("/models")
+async def get_available_models():
+    """Get information about available LLM models in Ollama"""
+    try:
+        # Get currently configured model
+        current_model = os.environ.get("LLM_MODEL", "mistral")
+        
+        # Check which models are actually available in Ollama
+        available_models = []
+        installed_models = []
+        
+        try:
+            response = requests.get("http://ollama:11434/api/tags", timeout=5)
+            if response.status_code == 200:
+                models_data = response.json()
+                if "models" in models_data:
+                    installed_models = [model.get("name") for model in models_data["models"]]
+                    logger.info(f"Installed models in Ollama: {installed_models}")
+        except Exception as e:
+            logger.error(f"Error getting installed models: {str(e)}")
+        
+        # Combine supported models info with installation status
+        for model_name, model_info in SUPPORTED_MODELS.items():
+            model_data = {
+                "name": model_name,
+                "description": model_info.get("description", ""),
+                "min_ram": model_info.get("min_ram", ""),
+                "quality": model_info.get("quality", ""),
+                "installed": model_name in installed_models,
+                "current": model_name == current_model
+            }
+            available_models.append(model_data)
+            
+        return {
+            "current_model": current_model,
+            "available_models": available_models
+        }
+    except Exception as e:
+        logger.error(f"Error getting model information: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error getting model information: {str(e)}"}
+        )
+
+# Add endpoint to set active model
+@app.post("/models/set")
+async def set_active_model(model_name: str = Form(...)):
+    """Set the active LLM model to use for generation"""
+    try:
+        if model_name not in SUPPORTED_MODELS:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Unsupported model: {model_name}. Available models are: {list(SUPPORTED_MODELS.keys())}"}
+            )
+        
+        # Check if model is installed, if not try to install it
+        if not ensure_model(model_name):
+            return JSONResponse(
+                status_code=503,
+                content={"error": f"Failed to ensure {model_name} model is available. Please install it manually with 'docker exec -it ollama ollama pull {model_name}'"}
+            )
+        
+        # Set environment variable
+        os.environ["LLM_MODEL"] = model_name
+        logger.info(f"Set active model to: {model_name}")
+        
+        # Additional model checks
+        response = requests.post(
+            "http://ollama:11434/api/generate",
+            json={"model": model_name, "prompt": "Hello", "stream": False},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=503,
+                content={"error": f"Model {model_name} is installed but failed to generate text. Status: {response.status_code}"}
+            )
+        
+        return {"message": f"Successfully set active model to {model_name}", "model": model_name}
+    except Exception as e:
+        logger.error(f"Error setting active model: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error setting active model: {str(e)}"}
+        )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
