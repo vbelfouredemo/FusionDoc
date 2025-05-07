@@ -957,6 +957,18 @@
                 <h2>Settings</h2>
                 <p>Configure application settings and select which AI model to use for documentation generation.</p>
                 
+                <!-- Prompt Template Section -->
+                <div class="settings-section">
+                    <h3>Prompt Template</h3>
+                    <p>View and modify the prompt template used for generating documentation. This template controls how the AI generates documentation from your integration files.</p>
+                    
+                    <textarea id="prompt-template-textarea" rows="15" style="width: 100%; font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px;"></textarea>
+                    
+                    <button id="save-prompt-template-button" class="action-button" onclick="savePromptTemplate()">Save Template</button>
+                    <p id="prompt-template-status" style="color: #27ae60; display: none; margin-top: 10px;">Template updated successfully!</p>
+                    <p id="prompt-template-error" style="color: #e74c3c; display: none; margin-top: 10px;">Failed to update template. Please try again.</p>
+                </div>
+                
                 <!-- Model Selection Section -->
                 <div class="settings-section">
                     <h3>LLM Model Selection</h3>
@@ -1045,6 +1057,41 @@
                 trainingManagementLoading.style.display = 'none';
             });
         }
+        
+        // Make savePromptTemplate available globally
+        async function savePromptTemplate() {
+            const newTemplate = document.getElementById('prompt-template-textarea').value;
+            const statusElement = document.getElementById('prompt-template-status');
+            const errorElement = document.getElementById('prompt-template-error');
+
+            try {
+                const response = await fetch('/template', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ new_template: newTemplate })
+                });
+
+                if (response.ok) {
+                    statusElement.style.display = 'block';
+                    errorElement.style.display = 'none';
+
+                    // Hide success message after 3 seconds
+                    setTimeout(() => {
+                        statusElement.style.display = 'none';
+                    }, 3000);
+                } else {
+                    const data = await response.json();
+                    errorElement.textContent = data.error || 'Failed to update prompt template.';
+                    errorElement.style.display = 'block';
+                    statusElement.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error saving prompt template:', error);
+                errorElement.textContent = 'Error saving prompt template.';
+                errorElement.style.display = 'block';
+                statusElement.style.display = 'none';
+            }
+        }
     </script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -1087,9 +1134,10 @@
                         loadTrainingExamples();
                     }
                     
-                    // If settings tab is clicked, load models
+                    // If settings tab is clicked, load models and prompt template
                     if (tabId === 'settings') {
                         loadModels();
+                        fetchPromptTemplate(); // Add this line to fetch the prompt template
                     }
                 });
             });
@@ -1238,6 +1286,16 @@
                 setModelBtn.textContent = 'Setting model...';
                 modelSuccess.style.display = 'none';
                 
+                // Add a spinner to the button
+                const modelSpinner = document.createElement('div');
+                modelSpinner.className = 'spinner';
+                modelSpinner.style.display = 'inline-block';
+                modelSpinner.style.width = '20px';
+                modelSpinner.style.height = '20px';
+                modelSpinner.style.marginLeft = '10px';
+                modelSpinner.style.verticalAlign = 'middle';
+                setModelBtn.appendChild(modelSpinner);
+                
                 try {
                     // Prepare form data
                     const formData = new FormData();
@@ -1273,6 +1331,11 @@
                     // Reset button state
                     setModelBtn.disabled = false;
                     setModelBtn.textContent = 'Set Active Model';
+                    
+                    // Remove the spinner
+                    if (setModelBtn.contains(modelSpinner)) {
+                        setModelBtn.removeChild(modelSpinner);
+                    }
                 }
             });
             
@@ -1986,7 +2049,7 @@
                     if (excludePatternContainer.children.length > 1) {
                         this.parentElement.remove();
                     } else {
-                        this.parentElement.querySelector('input').value = '';
+                                               this.parentElement.querySelector('input').value = '';
                     }
                 });
             });
@@ -2044,7 +2107,7 @@
                         max_depth: maxDepth,
                         max_pages: maxPages,
                         include_patterns: includePatterns.length > 0 ? includePatterns : null,
-                        exclude_patterns: excludePatterns.length > 0 ? excludePatterns : null
+                        exclude_patterns: excludePatterns.length >  0 ? excludePatterns : null
                     };
                     
                     // Call the API
@@ -2508,6 +2571,72 @@
             
             analyzeImageBtn.addEventListener('click', analyzeImage);
             analyzeImageSmartBtn.addEventListener('click', analyzeImageSmart);
+            
+            // Prompt template functionality
+            async function fetchPromptTemplate() {
+                try {
+                    const response = await fetch('/template');
+                    if (response.ok) {
+                        const data = await response.json();
+                        document.getElementById('prompt-template-textarea').value = data.template;
+                    } else {
+                        console.error('Failed to fetch prompt template:', response.statusText);
+                        document.getElementById('prompt-template-error').textContent = 'Failed to fetch prompt template.';
+                        document.getElementById('prompt-template-error').style.display = 'block';
+                    }
+                } catch (error) {
+                    console.error('Error fetching prompt template:', error);
+                    document.getElementById('prompt-template-error').textContent = 'Error fetching prompt template.';
+                    document.getElementById('prompt-template-error').style.display = 'block';
+                }
+            }
+
+            async function savePromptTemplate() {
+                const newTemplate = document.getElementById('prompt-template-textarea').value;
+                const statusElement = document.getElementById('prompt-template-status');
+                const errorElement = document.getElementById('prompt-template-error');
+
+                try {
+                    const response = await fetch('/template', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({ new_template: newTemplate })
+                    });
+
+                    if (response.ok) {
+                        statusElement.style.display = 'block';
+                        errorElement.style.display = 'none';
+
+                        // Hide success message after 3 seconds
+                        setTimeout(() => {
+                            statusElement.style.display = 'none';
+                        }, 3000);
+                    } else {
+                        const data = await response.json();
+                        errorElement.textContent = data.error || 'Failed to update prompt template.';
+                        errorElement.style.display = 'block';
+                        statusElement.style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Error saving prompt template:', error);
+                    errorElement.textContent = 'Error saving prompt template.';
+                    errorElement.style.display = 'block';
+                    statusElement.style.display = 'none';
+                }
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                // Add event listener for the save prompt template button
+                document.getElementById('save-prompt-template-button').addEventListener('click', savePromptTemplate);
+
+                // Load the prompt template when the settings tab is clicked
+                document.querySelector('.tab[data-tab="settings"]').addEventListener('click', fetchPromptTemplate);
+
+                // Also load the template if settings tab is active on page load
+                if (document.querySelector('.tab[data-tab="settings"]').classList.contains('active')) {
+                    fetchPromptTemplate();
+                }
+            });
         });
     </script>
 </body>
