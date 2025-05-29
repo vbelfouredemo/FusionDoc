@@ -644,21 +644,98 @@
             padding: 2px 5px;
             display: block;
         }
-        /* Image Analysis styles */
-        .image-preview {
-            max-width: 100%;
-            max-height: 300px;
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 600px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .close-modal {
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            color: #aaa;
+        }
+        .close-modal:hover {
+            color: #000;
+        }
+        .metadata-section {
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .metadata-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .metadata-label {
+            font-weight: 500;
+            color: #333;
+        }
+        .metadata-value {
+            color: #555;
+        }
+        .tab-container {
             margin-top: 15px;
-            border: 1px solid #e1e4e8;
-            border-radius: 5px;
+        }
+        .modal-tabs {
+            display: flex;
+            border-bottom: 1px solid #e1e4e8;
+            margin-bottom: 10px;
+        }
+        .modal-tab {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            font-weight: 500;
+        }
+        .modal-tab.active {
+            border-bottom: 2px solid #3498db;
+            color: #3498db;
+        }
+        .modal-tab-content {
             display: none;
         }
-        .image-format-selection {
-            margin-top: 1rem;
-            padding: 1rem;
+        .modal-tab-content.active {
+            display: block;
+        }
+        .documentation-viewer {
+            white-space: pre-wrap;
+            background-color: #f1f8e9;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #d1e7dd;
+            margin-top: 10px;
+        }
+        .json-viewer {
             background-color: #f8f9fa;
-            border-radius: 5px;
-            border: 1px solid #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            margin-top: 10px;
+            overflow-x: auto;
         }
     </style>
 </head>
@@ -670,7 +747,6 @@
         <div class="tabs">
             <div class="tab active" data-tab="generate">Generate Documentation</div>
             <div class="tab" data-tab="train">Train the Model</div>
-            <div class="tab" data-tab="image">Image Analysis</div>
             <div class="tab" data-tab="settings">Settings</div>
         </div>
         
@@ -903,54 +979,6 @@
             </div>
         </div>
         
-        <!-- Image Analysis Tab -->
-        <div class="tab-content" id="image-tab">
-            <div class="card">
-                <h2>Image Analysis</h2>
-                <p>Upload an image to generate documentation or analysis about its content.</p>
-                
-                <div class="drag-area" id="image-drag-area">
-                    <h3>Drag & Drop Image</h3>
-                    <span>Or</span>
-                    <button>Browse Image</button>
-                    <input type="file" hidden accept="image/*" id="image-input">
-                </div>
-                
-                <div id="image-display"></div>
-                <img id="image-preview" class="image-preview">
-                
-                <div class="image-format-selection">
-                    <h4>Select Output Format</h4>
-                    <div class="format-options">
-                        <label class="format-option">
-                            <input type="radio" name="image-output-format" value="markdown" checked>
-                            Markdown
-                        </label>
-                        <label class="format-option">
-                            <input type="radio" name="image-output-format" value="html">
-                            HTML
-                        </label>
-                        <label class="format-option">
-                            <input type="radio" name="image-output-format" value="pdf">
-                            PDF
-                        </label>
-                    </div>
-                </div>
-                
-                <button id="analyze-image" class="analyze-btn">Analyze Image</button>
-                <button id="analyze-image-smart" class="analyze-btn analyze-smart-btn">Smart Analyze Image</button>
-                
-                <div class="loading" id="image-loading">
-                    <div class="spinner"></div>
-                    <p>Analyzing image...</p>
-                </div>
-                
-                <div class="error" id="image-error-message"></div>
-            </div>
-            
-            <div id="image-result"></div>
-        </div>
-
         <!-- Settings Tab -->
         <div class="tab-content" id="settings-tab">
             <div class="card">
@@ -1020,6 +1048,53 @@
         </div>
     </div>
 
+    <!-- Training Data Viewer Modal -->
+    <div id="training-data-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Training Example</h2>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="training-example-metadata" class="metadata-section">
+                    <div class="metadata-row">
+                        <div class="metadata-label">Source:</div>
+                        <div id="example-source-type" class="metadata-value"></div>
+                    </div>
+                    <div class="metadata-row">
+                        <div class="metadata-label">Created:</div>
+                        <div id="example-created" class="metadata-value"></div>
+                    </div>
+                    <div class="metadata-row">
+                        <div class="metadata-label">Quality:</div>
+                        <div id="example-quality" class="metadata-value"></div>
+                    </div>
+                    <div class="metadata-row">
+                        <div class="metadata-label">Word Count:</div>
+                        <div id="example-word-count" class="metadata-value"></div>
+                    </div>
+                </div>
+                
+                <div class="tab-container">
+                    <div class="modal-tabs">
+                        <div class="modal-tab active" data-modaltab="documentation">Documentation</div>
+                        <div class="modal-tab" data-modaltab="raw-data">Raw Data</div>
+                    </div>
+                    
+                    <div class="modal-tab-content active" id="documentation-tab">
+                        <h3>Training Documentation</h3>
+                        <div id="example-documentation" class="documentation-viewer"></div>
+                    </div>
+                    
+                    <div class="modal-tab-content" id="raw-data-tab">
+                        <h3>Raw JSON Data</h3>
+                        <pre id="example-json" class="json-viewer"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Make deleteTrainingExample available globally
         function deleteTrainingExample(exampleId, integrationName) {
@@ -1056,6 +1131,100 @@
             .finally(() => {
                 trainingManagementLoading.style.display = 'none';
             });
+        }
+        
+        // Function to view training example content
+        async function viewTrainingExample(exampleId, integrationName) {
+            const modal = document.getElementById('training-data-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const closeModal = document.querySelector('.close-modal');
+            const sourceType = document.getElementById('example-source-type');
+            const created = document.getElementById('example-created');
+            const quality = document.getElementById('example-quality');
+            const wordCount = document.getElementById('example-word-count');
+            const docsContent = document.getElementById('example-documentation');
+            const jsonContent = document.getElementById('example-json');
+            const trainingManagementLoading = document.getElementById('training-management-loading');
+            const trainingManagementError = document.getElementById('training-management-error');
+            
+            // Show loading state
+            trainingManagementLoading.style.display = 'block';
+            trainingManagementError.style.display = 'none';
+            
+            try {
+                // Fetch the training example data
+                const response = await fetch(`/training/view/${exampleId}`);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to retrieve training example');
+                }
+                
+                const example = await response.json();
+                
+                // Set modal title
+                modalTitle.textContent = `Training Example: ${example.name}`;
+                
+                // Set metadata values
+                sourceType.textContent = example.source_type;
+                created.textContent = example.created;
+                
+                // Format quality with color coding
+                let qualityClass = '';
+                if (example.quality >= 0.8) {
+                    qualityClass = 'style="color: #27ae60;"';
+                } else if (example.quality >= 0.5) {
+                    qualityClass = 'style="color: #f39c12;"';
+                } else {
+                    qualityClass = 'style="color: #e74c3c;"';
+                }
+                
+                quality.innerHTML = `<span ${qualityClass}>${example.quality_label} (${Math.round(example.quality * 100)}%)</span>`;
+                wordCount.textContent = `${example.word_count} words (${example.character_count} characters)`;
+                
+                // Set content tabs
+                docsContent.textContent = example.documentation;
+                jsonContent.textContent = JSON.stringify(example.integration_json, null, 2);
+                
+                // Show modal
+                modal.style.display = 'block';
+                
+                // Add modal tab switching behavior
+                const modalTabs = document.querySelectorAll('.modal-tab');
+                const modalTabContents = document.querySelectorAll('.modal-tab-content');
+                
+                modalTabs.forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        const tabId = tab.getAttribute('data-modaltab');
+                        
+                        // Remove active class from all tabs and tab contents
+                        modalTabs.forEach(t => t.classList.remove('active'));
+                        modalTabContents.forEach(c => c.classList.remove('active'));
+                        
+                        // Add active class to clicked tab and corresponding content
+                        tab.classList.add('active');
+                        document.getElementById(`${tabId}-tab`).classList.add('active');
+                    });
+                });
+                
+            } catch (error) {
+                trainingManagementError.textContent = `Error: ${error.message}`;
+                trainingManagementError.style.display = 'block';
+            } finally {
+                trainingManagementLoading.style.display = 'none';
+            }
+            
+            // Close modal when clicking the close button
+            closeModal.onclick = function() {
+                modal.style.display = 'none';
+            };
+            
+            // Close modal when clicking outside the modal content
+            window.onclick = function(event) {
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
+            };
         }
         
         // Make savePromptTemplate available globally
@@ -2302,6 +2471,7 @@
                                     <td>${example.created}</td>
                                     <td>${example.preview || 'No preview available'}</td>
                                     <td>
+                                        <button class="action-button" onclick="viewTrainingExample('${example.id}', '${example.integration_name}')">View Content</button>
                                         <button class="delete-example-btn" onclick="deleteTrainingExample('${example.id}', '${example.integration_name}')">Delete</button>
                                     </td>
                                 </tr>
@@ -2333,245 +2503,7 @@
                 loadTrainingExamples();
             });
             
-            // Image Analysis functionality
-            const imageDragArea = document.getElementById('image-drag-area');
-            const imageButton = imageDragArea.querySelector('button');
-            const imageInput = document.getElementById('image-input');
-            const imageDisplay = document.getElementById('image-display');
-            const imagePreview = document.getElementById('image-preview');
-            const analyzeImageBtn = document.getElementById('analyze-image');
-            const analyzeImageSmartBtn = document.getElementById('analyze-image-smart');
-            const imageResult = document.getElementById('image-result');
-            const imageLoading = document.getElementById('image-loading');
-            const imageErrorMessage = document.getElementById('image-error-message');
-            const imageFormatOptions = document.getElementsByName('image-output-format');
-            
-            let imageFile;
-            let uploadedImagePath;
-            
-            imageButton.onclick = () => {
-                imageInput.click();
-            };
-            
-            imageInput.addEventListener('change', function() {
-                imageFile = this.files[0];
-                displayImageFile();
-            });
-            
-            imageDragArea.addEventListener('dragover', (event) => {
-                event.preventDefault();
-                imageDragArea.classList.add('active');
-            });
-            
-            imageDragArea.addEventListener('dragleave', () => {
-                imageDragArea.classList.remove('active');
-            });
-            
-            imageDragArea.addEventListener('drop', (event) => {
-                event.preventDefault();
-                imageDragArea.classList.remove('active');
-                imageFile = event.dataTransfer.files[0];
-                displayImageFile();
-            });
-            
-            function displayImageFile() {
-                if (imageFile && imageFile.type.startsWith('image/')) {
-                    imageErrorMessage.style.display = 'none';
-                    const reader = new FileReader();
-                    
-                    reader.onload = () => {
-                        const fileSize = (imageFile.size / 1024).toFixed(2) + " KB";
-                        imageDisplay.innerHTML = `
-                            <div class="file-container">
-                                <div class="file-info">
-                                    <div class="file-name">${imageFile.name}</div>
-                                    <div class="file-size">${fileSize}</div>
-                                </div>
-                            </div>
-                        `;
-                        
-                        // Show image preview
-                        imagePreview.src = reader.result;
-                        imagePreview.style.display = 'block';
-                        
-                        // Show analyze button
-                        analyzeImageBtn.classList.add('visible');
-                        
-                        // Upload the image
-                        uploadImage();
-                    };
-                    
-                    reader.readAsDataURL(imageFile);
-                } else {
-                    showImageError('Please select a valid image file');
-                    resetImageFile();
-                }
-            }
-            
-            function resetImageFile() {
-                imageFile = null;
-                imageDisplay.innerHTML = '';
-                imagePreview.style.display = 'none';
-                analyzeImageBtn.classList.remove('visible');
-                imageResult.innerHTML = '';
-            }
-            
-            function showImageError(message) {
-                imageErrorMessage.textContent = message;
-                imageErrorMessage.style.display = 'block';
-                imageLoading.style.display = 'none';
-            }
-            
-            async function uploadImage() {
-                if (!imageFile) return;
-                
-                imageLoading.style.display = 'block';
-                imageErrorMessage.style.display = 'none';
-                
-                const formData = new FormData();
-                formData.append('file', imageFile);
-                
-                try {
-                    const uploadResponse = await fetch('/upload-image', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const uploadData = await uploadResponse.json();
-                    
-                    if (uploadResponse.ok && uploadData.file_path) {
-                        uploadedImagePath = uploadData.file_path;
-                        analyzeImageBtn.disabled = false;
-                    } else {
-                        showImageError(uploadData.error || 'Failed to upload image');
-                    }
-                } catch (error) {
-                    showImageError('An error occurred: ' + error.message);
-                } finally {
-                    imageLoading.style.display = 'none';
-                }
-            }
-            
-            function getSelectedImageFormat() {
-                for (const option of imageFormatOptions) {
-                    if (option.checked) {
-                        return option.value;
-                    }
-                }
-                return 'markdown'; // Default to markdown
-            }
-            
-            async function analyzeImage() {
-                if (!uploadedImagePath) {
-                    showImageError('Please upload an image first');
-                    return;
-                }
-                
-                imageResult.innerHTML = '';
-                imageLoading.style.display = 'block';
-                imageErrorMessage.style.display = 'none';
-                
-                try {
-                    const selectedFormat = getSelectedImageFormat();
-                    
-                    const response = await fetch('/analyze-image', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            image_path: uploadedImagePath,
-                            format: selectedFormat
-                        })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok && data.documentation) {
-                        let resultHTML = `
-                            <div class="card">
-                                <h2>Image Analysis</h2>
-                                <div class="documentation">${data.documentation}</div>
-                        `;
-                        
-                        // Add download button for markdown or PDF format
-                        if (data.download_url) {
-                            resultHTML += `
-                                <a href="${data.download_url}" class="download-btn">
-                                    Download ${selectedFormat.toUpperCase()}
-                                </a>
-                            `;
-                        }
-                        
-                        resultHTML += `</div>`;
-                        imageResult.innerHTML = resultHTML;
-                    } else {
-                        showImageError(data.error || 'Failed to analyze image');
-                    }
-                } catch (error) {
-                    showImageError('An error occurred: ' + error.message);
-                } finally {
-                    imageLoading.style.display = 'none';
-                }
-            }
-            
-            async function analyzeImageSmart() {
-                if (!uploadedImagePath) {
-                    showImageError('Please upload an image first');
-                    return;
-                }
-                
-                imageResult.innerHTML = '';
-                imageLoading.style.display = 'block';
-                imageErrorMessage.style.display = 'none';
-                
-                try {
-                    const selectedFormat = getSelectedImageFormat();
-                    
-                    const response = await fetch('/analyze-image-smart', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            image_path: uploadedImagePath,
-                            format: selectedFormat
-                        })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok && data.documentation) {
-                        let resultHTML = `
-                            <div class="card">
-                                <h2>Smart Image Analysis</h2>
-                                <div class="documentation">${data.documentation}</div>
-                        `;
-                        
-                        // Add download button for markdown or PDF format
-                        if (data.download_url) {
-                            resultHTML += `
-                                <a href="${data.download_url}" class="download-btn">
-                                    Download ${selectedFormat.toUpperCase()}
-                                </a>
-                            `;
-                        }
-                        
-                        resultHTML += `</div>`;
-                        imageResult.innerHTML = resultHTML;
-                    } else {
-                        showImageError(data.error || 'Failed to analyze image with smart processing');
-                    }
-                } catch (error) {
-                    showImageError('An error occurred: ' + error.message);
-                } finally {
-                    imageLoading.style.display = 'none';
-                }
-            }
-            
-            analyzeImageBtn.addEventListener('click', analyzeImage);
-            analyzeImageSmartBtn.addEventListener('click', analyzeImageSmart);
-            
+            // Prompt template functionality
             // Prompt template functionality
             async function fetchPromptTemplate() {
                 try {

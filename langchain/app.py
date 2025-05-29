@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 import requests
 from bs4 import BeautifulSoup
 import html2text
@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse
 import traceback
 import base64
 from io import BytesIO
-from PIL import Image
 import uuid
 import time
 import os
@@ -20,20 +19,19 @@ import logging
 import markdown
 import pdfkit
 import tempfile
-import shutil  # Add import for directory cleanup
+import shutil
 
 # Update Playwright imports to use async version
 from playwright.async_api import async_playwright
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
-from langchain_community.document_loaders import JSONLoader, TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import JSONLoader
 from langchain_community.vectorstores import Chroma
 from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain_community.embeddings import OllamaEmbeddings
@@ -112,15 +110,6 @@ class WebCrawlBatchResult(BaseModel):
     pages_crawled: int
     urls: List[str]
     training_id: str
-
-class ImageAnalysisRequest(BaseModel):
-    image_path: str = Field(..., description="Path to the image file to analyze")
-    format: Optional[OutputFormat] = Field(OutputFormat.markdown, description="Output format for the documentation")
-
-class ImageUploadResponse(BaseModel):
-    filename: str
-    file_path: str
-    message: str
 
 # Default query template to use if no custom template is provided
 DEFAULT_QUERY_TEMPLATE = """Generate detailed documentation for the '{integration_name}' integration.
@@ -1424,15 +1413,16 @@ async def train_with_zip(
         # Extract integration name
         integration_name = integration_json.get("name", f"Integration_{integration_id}")
         
-        # IMPROVED: Analyze the integration flow to get comprehensive information
+        # ENHANCED: Analyze the integration flow to get comprehensive information
         # This matches what the smart documentation does, making the training example more complete
         flow_analysis = analyze_integration_flow(integration_id, extract_dir)
         
-        # IMPROVED: Create an enriched integration JSON that includes flow analysis
-        # This better matches what will be used during smart documentation generation
+        # ENHANCED: Store the complete flow analysis, not just basic data
+        # This ensures we have all component details and relationships in the training data
         enriched_integration_json = {
             "basic_data": integration_json,
-            "flow_analysis": flow_analysis
+            "flow_analysis": flow_analysis,
+            "complete_structure": True   # Flag to indicate this contains the full structure
         }
         
         # Create a training example with the enriched JSON
@@ -1467,7 +1457,7 @@ async def train_with_zip(
             )
             
             # Create document with metadata
-            # IMPROVED: Use the same enriched JSON representation for vector embedding
+            # ENHANCED: Use the same enriched JSON representation for vector embedding
             # that will be used during smart documentation
             doc = Document(
                 page_content=json.dumps(enriched_integration_json),
@@ -1525,271 +1515,6 @@ async def train_with_zip(
         return JSONResponse(
             status_code=500,
             content={"error": f"Error processing training data: {str(e)}"}
-        )
-
-@app.post("/analyze-image")
-async def analyze_image(request: ImageAnalysisRequest):
-    """
-    Analyze an integration flow diagram image and generate structured documentation about the integration.
-    Uses a multimodal model that can actually process images.
-    """
-    try:
-        logger.info(f"Starting analysis of integration flow diagram: {request.image_path}")
-        
-        # Check if the image file exists
-        if not os.path.exists(request.image_path):
-            raise HTTPException(
-                status_code=404,
-                detail="Image file not found. Please upload the image again."
-            )
-        
-        # Check if Ollama service is available
-        try:
-            logger.info("Checking if Ollama service is available...")
-            response = requests.get("http://ollama:11434", timeout=5)
-            if response.status_code >= 400:
-                logger.error(f"Ollama service returned status code: {response.status_code}")
-                raise HTTPException(
-                    status_code=503,
-                    detail="Ollama service is not responding correctly. Please check if the service is running properly."
-                )
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Cannot connect to Ollama service: {str(e)}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Cannot connect to Ollama service: {str(e)}. Please ensure the Ollama container is running."
-            )
-        
-        # Check if llava model is available
-        try:
-            logger.info("Checking if llava model is available...")
-            response = requests.get("http://ollama:11434/api/tags", timeout=5)
-            models = []
-            
-            if response.status_code == 200:
-                models_data = response.json()
-                if "models" in models_data:
-                    models = [model.get("name") for model in models_data["models"]]
-            
-            # Look for llava model
-            if "llava" not in models:
-                logger.warning("llava model not found. Attempting to pull it...")
-                # Try to pull the llava model
-                pull_response = requests.post(
-                    "http://ollama:11434/api/pull",
-                    json={"name": "llava"},
-                    timeout=300  # 5 minutes timeout for model download
-                )
-                
-                if pull_response.status_code != 200:
-                    logger.error(f"Failed to pull llava model: {pull_response.status_code}")
-                    raise HTTPException(
-                        status_code=503,
-                        detail="Could not find or download llava model. Please run 'docker exec -it ollama ollama pull llava' to install it."
-                    )
-                logger.info("Successfully pulled llava model")
-            else:
-                logger.info("llava model is available")
-        except Exception as e:
-            logger.error(f"Error checking/pulling llava model: {str(e)}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Error setting up llava model: {str(e)}. Try running 'docker exec -it ollama ollama pull llava' manually."
-            )
-        
-        # Load the image
-        try:
-            image = Image.open(request.image_path)
-            
-            # Resize if the image is too large - balance between size and quality
-            max_size = (800, 800)  # Multimodal models can handle larger images than text-only models
-            if image.width > max_size[0] or image.height > max_size[1]:
-                image.thumbnail(max_size, Image.LANCZOS)
-            
-            # Convert image to base64 for model processing
-            buffered = BytesIO()
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            # Use good quality for multimodal models
-            image.save(buffered, format="JPEG", quality=85)
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            
-            logger.info(f"Image processed: {image.width}x{image.height}, base64 length: {len(img_str)}")
-        except Exception as e:
-            logger.error(f"Error processing image: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing image: {str(e)}"
-            )
-        
-        # Initialize LLM with retry logic
-        max_retries = 3
-        retry_delay = 10  # Seconds between retries
-        
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"LLM attempt {attempt + 1}: Setting up llava for flow diagram analysis...")
-                
-                # Specialized prompt for integration flow diagrams
-                prompt = f"""Analyze this integration flow diagram image in detail. 
-
-This is an integration flow diagram showing how data moves between systems. Document it by providing:
-1. An overview of the integration's purpose
-2. A detailed description of all components visible in the diagram 
-3. The data flow between components showing the sequence of operations
-4. Any error handling or conditional logic shown
-
-Format your response as structured markdown with headings and bullet points.
-"""
-                
-                # Call Ollama API with increased timeout and optimized configuration
-                logger.info("Sending request to Ollama with llava model for flow diagram analysis")
-                
-                # Use a longer timeout to accommodate processing
-                llm_response = requests.post(
-                    "http://ollama:11434/api/generate",
-                    json={
-                        "model": "llava",  # Use llava multimodal model instead of mistral
-                        "prompt": prompt,
-                        "images": [img_str],  # Pass image separately for multimodal models
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.2,
-                            "top_k": 40,
-                            "top_p": 0.9,
-                            "num_predict": 2048
-                        }
-                    },
-                    timeout=300  # 5 minute timeout for complex diagram analysis
-                )
-                
-                if llm_response.status_code == 200:
-                    response_data = llm_response.json()
-                    analysis_text = response_data.get("response", "")
-                    
-                    if not analysis_text:
-                        raise Exception("Empty response from language model")
-                    
-                    # Check for common error responses
-                    if "I cannot see any image" in analysis_text or "I don't see any image" in analysis_text:
-                        logger.error("llava model couldn't process the image properly")
-                        raise Exception("The llava model couldn't process the image properly. It may be corrupted or in an unsupported format.")
-                    
-                    logger.info("Integration flow documentation generated successfully")
-                    
-                    # Format and return the result based on requested output format
-                    if request.format == OutputFormat.html:
-                        # Convert markdown to HTML for display
-                        html_doc = markdown.markdown(analysis_text)
-                        return {"documentation": html_doc, "format": "html"}
-                    
-                    # Create file name based on original image
-                    base_filename = os.path.basename(request.image_path).rsplit('.', 1)[0]
-                    
-                    if request.format == OutputFormat.markdown:
-                        # Save the markdown content
-                        md_filename = f"{base_filename}_integration_doc.md"
-                        md_filepath = f"/data/{md_filename}"
-                        
-                        with open(md_filepath, "w") as f:
-                            f.write(f"# Integration Flow Documentation: {base_filename}\n\n{analysis_text}")
-                        
-                        return {
-                            "documentation": analysis_text,
-                            "format": "markdown",
-                            "filename": md_filename,
-                            "download_url": f"/download/{md_filename}"
-                        }
-                    
-                    elif request.format == OutputFormat.pdf:
-                        # Convert to PDF
-                        pdf_filename = f"{base_filename}_integration_doc.pdf"
-                        pdf_filepath = f"/data/{pdf_filename}"
-                        
-                        # Create HTML content for PDF with side-by-side image and documentation
-                        html_content = f"""
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <title>Integration Flow Documentation: {base_filename}</title>
-                            <style>
-                                body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }}
-                                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
-                                h2 {{ color: #3498db; margin-top: 30px; }}
-                                h3 {{ color: #2980b9; }}
-                                .content {{ margin-top: 20px; }}
-                                .image-container {{ text-align: center; margin-bottom: 20px; }}
-                                img {{ max-width: 100%; max-height: 500px; border: 1px solid #ddd; }}
-                                h2 {{ color: #3498db; margin-top: 20px; }}
-                                h3 {{ color: #2980b9; }}
-                                .component {{ margin-bottom: 15px; }}
-                                .component-details {{ margin-left: 20px; }}
-                                pre {{ background-color: #f8f9fa; padding: 10px; border-radius: 5px; }}
-                            </style>
-                        </head>
-                        <body>
-                            <h1>Integration Flow Documentation: {base_filename}</h1>
-                            
-                            <div class="image-container">
-                                <img src="data:image/jpeg;base64,{img_str}" alt="Integration Flow Diagram">
-                                <p><em>Integration Flow Diagram</em></p>
-                            </div>
-                            
-                            <div class="content">
-                                {markdown.markdown(analysis_text)}
-                            </div>
-                        </body>
-                        </html>
-                        """
-                        
-                        try:
-                            # Generate PDF file
-                            pdfkit.from_string(html_content, pdf_filepath)
-                            
-                            return {
-                                "documentation": markdown.markdown(analysis_text),
-                                "format": "pdf",
-                                "filename": pdf_filename,
-                                "download_url": f"/download/{pdf_filename}"
-                            }
-                        except Exception as e:
-                            logger.error(f"Error generating PDF: {str(e)}")
-                            # Fall back to HTML if PDF generation fails
-                            return {
-                                "documentation": markdown.markdown(analysis_text),
-                                "format": "html",
-                                "error": f"Failed to generate PDF: {str(e)}"
-                            }
-                else:
-                    logger.error(f"LLM API error: {llm_response.status_code}, {llm_response.text}")
-                    raise Exception(f"LLM API returned status code {llm_response.status_code}: {llm_response.text}")
-                
-            except requests.exceptions.Timeout as e:
-                logger.error(f"LLM attempt {attempt + 1} timed out: {str(e)}")
-                if attempt == max_retries - 1:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="Image analysis is taking longer than expected. This could be due to the complexity of the image or the server load. Please try again later."
-                    )
-                logger.warning(f"Request timed out. Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            except Exception as e:
-                logger.error(f"LLM attempt {attempt + 1} failed: {str(e)}")
-                if attempt == max_retries - 1:
-                    raise HTTPException(
-                        status_code=503,
-                        detail=f"Failed to analyze integration flow diagram: {str(e)}"
-                    )
-                logger.warning(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in analyze-image: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error analyzing integration flow diagram: {str(e)}"
         )
 
 @app.get("/download/{filename}")
@@ -2632,6 +2357,73 @@ def flatten_json(json_obj, parent_key='', separator='_'):
     items[parent_key] = json_obj
     return items
 
+@app.get("/training/view/{example_id}")
+async def view_training_example(example_id: str):
+    """Get the full content of a specific training example by ID"""
+    try:
+        # Find the example file with this ID
+        example_found = False
+        example_file = None
+        
+        if os.path.exists("/data/langchain"):
+            for file in os.listdir("/data/langchain"):
+                if file.endswith(f"{example_id}.json"):
+                    example_file = f"/data/langchain/{file}"
+                    example_found = True
+                    break
+        
+        if not example_found:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Training example with ID {example_id} not found"}
+            )
+        
+        # Read the example content
+        with open(example_file, "r") as f:
+            example_data = json.load(f)
+        
+        # Extract integration name from filename
+        filename = os.path.basename(example_file)
+        integration_name = "_".join(filename.split("_")[:-1]) if "_" in filename else filename.replace(".json", "")
+        
+        # Determine the source of this training example
+        source_type = "Web Documentation" if "WebDoc" in filename else "Integration Archive"
+        
+        # Get file creation timestamp
+        file_timestamp = os.path.getctime(example_file)
+        formatted_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(file_timestamp))
+        
+        # Calculate quality metrics based on documentation length and content
+        doc_text = example_data.get("documentation", "")
+        doc_length = len(doc_text)
+        quality_score = min(1.0, doc_length / 500)
+        has_structure = 1 if "##" in doc_text or "#" in doc_text else 0
+        has_details = 1 if len(doc_text.split()) > 100 else 0
+        combined_quality = (quality_score * 0.6) + (has_structure * 0.2) + (has_details * 0.2)
+        
+        # Format quality as a text label
+        quality_label = "High" if combined_quality >= 0.8 else "Medium" if combined_quality >= 0.5 else "Low"
+        
+        # Format response with the example data and metadata
+        return {
+            "id": example_id,
+            "name": integration_name,
+            "source_type": source_type,
+            "created": formatted_time,
+            "quality": combined_quality,
+            "quality_label": quality_label,
+            "documentation": example_data.get("documentation", ""),
+            "integration_json": example_data.get("integration_json", {}),
+            "word_count": len(doc_text.split()),
+            "character_count": len(doc_text)
+        }
+    except Exception as e:
+        logger.error(f"Error viewing training example: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error viewing training example: {str(e)}"}
+        )
+
 @app.post("/cleanup-vectorstores")
 async def cleanup_vectorstores():
     """
@@ -2752,7 +2544,7 @@ async def set_active_model(model_name: str = Form(...)):
         if not ensure_model(model_name):
             return JSONResponse(
                 status_code=503,
-                content={"error": f"Failed to ensure {model_name} model is available. Please install it manually with 'docker exec -it ollama ollama pull {model_name}'"}
+                content={"error": f"Failed to ensure {model_name} model is available. Please install it manually with 'docker exec -it ollama olloma pull {model_name}'"}
             )
         
         # Set environment variable
