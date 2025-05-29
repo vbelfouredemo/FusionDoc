@@ -46,7 +46,7 @@ logger = logging.getLogger("FusionDoc")
 
 # Get the LLM model from environment variable, or use default model
 # This allows switching models easily without changing code
-DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "mistral")
+DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "llama3")
 logger.info(f"Using LLM model: {DEFAULT_LLM_MODEL}")
 
 # Define supported models and their requirements
