@@ -766,18 +766,18 @@
                 <div id="file-display"></div>
                 
                 <!-- Integration Selection Section (Added) -->
-                <div class="integration-selection" id="integration-selection">
+                <div class="integration-selection" id="integration-selection" style="display: none;">
                     <h4>Select Integrations to Document</h4>
                     <div class="integration-list" id="integration-list">
                         <!-- Integrations will be listed here -->
                     </div>
                     <div class="select-actions">
-                        <button class="select-all-btn" id="select-all">Select All</button>
-                        <button class="deselect-all-btn" id="deselect-all">Deselect All</button>
+                        <button class="select-all-btn action-button" id="select-all">Select All</button>
+                        <button class="deselect-all-btn action-button" style="background-color: #95a5a6;" id="deselect-all">Deselect All</button>
                     </div>
                 </div>
                 
-                <div class="format-selection">
+                <div class="format-selection" id="format-selection" style="display: none;">
                     <h4>Select Output Format</h4>
                     <div class="format-options">
                         <label class="format-option">
@@ -796,7 +796,7 @@
                 </div>
                 
                 <!-- Add verbose mode option -->
-                <div class="verbose-option" style="margin-top: 1rem; padding: 0.5rem 1rem; background-color: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef;">
+                <div class="verbose-option" id="verbose-option" style="margin-top: 1rem; padding: 0.5rem 1rem; background-color: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef; display: none;">
                     <label style="display: flex; align-items: center; cursor: pointer;">
                         <input type="checkbox" id="verbose-mode" style="margin-right: 8px;">
                         <span>Verbose Mode (Show similar examples from training data)</span>
@@ -992,7 +992,10 @@
                     
                     <textarea id="prompt-template-textarea" rows="15" style="width: 100%; font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px;"></textarea>
                     
-                    <button id="save-prompt-template-button" class="action-button" onclick="savePromptTemplate()">Save Template</button>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="save-prompt-template-button" class="action-button">Save Template</button>
+                        <button id="reset-prompt-template-button" class="action-button" style="background-color: #f39c12;">Reset to Default</button>
+                    </div>
                     <p id="prompt-template-status" style="color: #27ae60; display: none; margin-top: 10px;">Template updated successfully!</p>
                     <p id="prompt-template-error" style="color: #e74c3c; display: none; margin-top: 10px;">Failed to update template. Please try again.</p>
                 </div>
@@ -1250,7 +1253,7 @@
                     }, 3000);
                 } else {
                     const data = await response.json();
-                    errorElement.textContent = data.error || 'Failed to update prompt template.';
+                    errorElement.textContent = data.error || 'Failed to update template.';
                     errorElement.style.display = 'block';
                     statusElement.style.display = 'none';
                 }
@@ -1261,8 +1264,55 @@
                 statusElement.style.display = 'none';
             }
         }
-    </script>
-    <script>
+        
+        async function resetPromptTemplate() {
+            console.log("Reset template function called");
+            const statusElement = document.getElementById('prompt-template-status');
+            const errorElement = document.getElementById('prompt-template-error');
+            const textareaElement = document.getElementById('prompt-template-textarea');
+
+            try {
+                if (!confirm('Are you sure you want to reset the prompt template to the default?')) {
+                    return;
+                }
+                
+                console.log("Making reset request to /template/reset");
+                const response = await fetch('/template/reset', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    console.log("Reset request successful");
+                    const data = await response.json();
+                    console.log("Response data:", data);
+                    
+                    // Update the textarea with the default template
+                    textareaElement.value = data.template;
+                    
+                    // Show success message
+                    statusElement.textContent = 'Template reset to default successfully!';
+                    statusElement.style.display = 'block';
+                    errorElement.style.display = 'none';
+
+                    // Hide success message after 3 seconds
+                    setTimeout(() => {
+                        statusElement.style.display = 'none';
+                    }, 3000);
+                } else {
+                    console.error("Reset request failed:", response.status);
+                    const data = await response.json();
+                    errorElement.textContent = data.error || 'Failed to reset prompt template.';
+                    errorElement.style.display = 'block';
+                    statusElement.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error resetting prompt template:', error);
+                errorElement.textContent = 'Error resetting prompt template.';
+                errorElement.style.display = 'block';
+                statusElement.style.display = 'none';
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             // Tab switching functionality
             const tabs = document.querySelectorAll('.tab');
@@ -1307,6 +1357,19 @@
                     if (tabId === 'settings') {
                         loadModels();
                         fetchPromptTemplate(); // Add this line to fetch the prompt template
+                        
+                        // Add event listeners for prompt template buttons
+                        const saveTemplateBtn = document.getElementById('save-prompt-template-button');
+                        const resetTemplateBtn = document.getElementById('reset-prompt-template-button');
+                        
+                        if (saveTemplateBtn) {
+                            saveTemplateBtn.addEventListener('click', savePromptTemplate);
+                        }
+                        
+                        if (resetTemplateBtn) {
+                            resetTemplateBtn.addEventListener('click', resetPromptTemplate);
+                            console.log("Reset template button event listener attached");
+                        }
                     }
                 });
             });
@@ -1673,7 +1736,10 @@
                     integrationList.appendChild(item);
                 });
                 
+                // Show all the previously hidden sections
                 integrationSelection.style.display = 'block';
+                document.getElementById('format-selection').style.display = 'block';
+                document.getElementById('verbose-option').style.display = 'block';
                 analyzeBtn.classList.add('visible');
                 analyzeSmartBtn.classList.add('visible');
             }
@@ -1992,7 +2058,7 @@
                 
                 if (!documentation) {
                     showTrainingError('Please enter the expected documentation for this integration');
-                    return;
+                                       return;
                 }
                 
                 trainingLoading.style.display = 'block';
@@ -2556,10 +2622,73 @@
                     statusElement.style.display = 'none';
                 }
             }
+            
+            async function resetPromptTemplate() {
+                console.log("Reset template function called");
+                const statusElement = document.getElementById('prompt-template-status');
+                const errorElement = document.getElementById('prompt-template-error');
+                const textareaElement = document.getElementById('prompt-template-textarea');
+
+                try {
+                    if (!confirm('Are you sure you want to reset the prompt template to the default?')) {
+                        return;
+                    }
+                    
+                    console.log("Making reset request to /template/reset");
+                    const response = await fetch('/template/reset', {
+                        method: 'POST'
+                    });
+
+                    if (response.ok) {
+                        console.log("Reset request successful");
+                        const data = await response.json();
+                        console.log("Response data:", data);
+                        
+                        // Update the textarea with the default template
+                        textareaElement.value = data.template;
+                        
+                        // Show success message
+                        statusElement.textContent = 'Template reset to default successfully!';
+                        statusElement.style.display = 'block';
+                        errorElement.style.display = 'none';
+
+                        // Hide success message after 3 seconds
+                        setTimeout(() => {
+                            statusElement.style.display = 'none';
+                        }, 3000);
+                    } else {
+                        console.error("Reset request failed:", response.status);
+                        const data = await response.json();
+                        errorElement.textContent = data.error || 'Failed to reset prompt template.';
+                        errorElement.style.display = 'block';
+                        statusElement.style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Error resetting prompt template:', error);
+                    errorElement.textContent = 'Error resetting prompt template.';
+                    errorElement.style.display = 'block';
+                    statusElement.style.display = 'none';
+                }
+            }
 
             document.addEventListener('DOMContentLoaded', () => {
+                console.log("DOM content loaded - setting up event listeners");
+                
+                // Get the reset button element
+                const resetButton = document.getElementById('reset-prompt-template-button');
+                
                 // Add event listener for the save prompt template button
                 document.getElementById('save-prompt-template-button').addEventListener('click', savePromptTemplate);
+                console.log("Save button event listener added");
+                
+                // Add event listener for the reset prompt template button
+                resetButton.addEventListener('click', resetPromptTemplate);
+                console.log("Reset button event listener added");
+                
+                // Add a direct test click handler to log when the button is clicked
+                resetButton.addEventListener('click', () => {
+                    console.log("Reset button was clicked!");
+                });
 
                 // Load the prompt template when the settings tab is clicked
                 document.querySelector('.tab[data-tab="settings"]').addEventListener('click', fetchPromptTemplate);

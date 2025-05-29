@@ -2623,5 +2623,31 @@ async def update_template(new_template: str = Form(...)):
             content={"error": f"Error updating query template: {str(e)}"}
         )
 
+@app.post("/template/reset")
+async def reset_template():
+    """
+    Reset the query template to the default.
+    Removes the custom template file if it exists, so the application falls back to the default template.
+    """
+    try:
+        template_dir = "/data/templates"
+        custom_template_path = os.path.join(template_dir, "custom_query_template.txt")
+        
+        # Remove the custom template file if it exists
+        if os.path.exists(custom_template_path):
+            os.remove(custom_template_path)
+            logger.info("Custom query template removed, reset to default template")
+        
+        # Get the current default template to return
+        template = DEFAULT_QUERY_TEMPLATE
+        
+        return {"message": "Query template reset to default", "template": template}
+    except Exception as e:
+        logger.error(f"Error resetting query template: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error resetting query template: {str(e)}"}
+        )
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
